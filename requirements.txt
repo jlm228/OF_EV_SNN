@@ -12,7 +12,7 @@ hdf5plugin
 tqdm
 
 # required by spikingjelly, but not necessary to us
-loris
+# loris  # fails to build on Windows without MSVC C++ Build Tools + hits a Windows path-length limit during sdist extraction
 torchaudio
 ninja
 
