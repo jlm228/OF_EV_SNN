@@ -39,7 +39,7 @@ forward_labels = 1
 
 # Create validation dataset
 print("Creating Validation Dataset ...")
-valid_dataset = DSECDatasetLite(root = '/opt/Partage/DSEC/saved_flow_data', file_list = 'valid_split_doubleseq.csv', num_frames_per_ts = 11, transform = None)
+valid_dataset = DSECDatasetLite(root = 'data/dataset/saved_flow_data', file_list = 'valid_split_thun_00_a.csv', num_frames_per_ts = 11, transform = None)
 
 # Define validation dataloader
 valid_dataloader = torch.utils.data.DataLoader(dataset = valid_dataset, batch_size = 1, shuffle = False, drop_last = False, pin_memory = True)
@@ -51,7 +51,7 @@ valid_dataloader = torch.utils.data.DataLoader(dataset = valid_dataset, batch_si
 # Create the network
 
 net = NeuronPool_Separable_Pool3d().to(device)
-net.load_state_dict(torch.load('examples/checkpoint_epoch34.pth'))
+net.load_state_dict(torch.load('examples/checkpoint_epoch34.pth', map_location=device))
 
 
 ##########
