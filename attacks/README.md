@@ -1,9 +1,23 @@
 # `attacks/` — modular cybersecurity threat suite
 
 Threats that perturb the event input to the optical-flow SNN, for robustness /
-security analysis. The first threat implemented is a **spike-retiming attack**
-(timing-only, rate-preserving), but the framework is built so other threats plug
-in without touching the network, dataset, or evaluation loop.
+security analysis. Each attack *family* lives in its own subpackage, but all
+of them plug into the same `EventThreat` registry without touching the
+network, dataset, or evaluation loop.
+
+## Layout
+
+```
+attacks/
+  base.py               EventThreat ABC, @register_threat, build_attack registry
+  retiming/              timing-only, rate-preserving spike-retiming attacks
+    spike_retiming.py    BlackBoxRetiming, PILRetimingAttack
+  fgsm_pgd/               additive L-infinity attacks on the raw event-count tensor
+    attack.py            FGSMAttack, PGDAttack
+    calibrate_epsilon.py  data-grounded epsilon budget from real event-count stats
+    attack_health.py      PGD-vs-FGSM gradient-health diagnostic
+  compare_easy_hard.py   generic clean/attacked comparison across two conditions
+```
 
 ## Concepts
 
@@ -18,11 +32,22 @@ the model-input event tensor and returns an adversarial copy of the same shape.
 
 ## Built-in threats
 
-| name (`build_attack`)   | class                 | notes |
-|-------------------------|-----------------------|-------|
-| `none` / `clean`        | `IdentityThreat`      | no-op baseline |
-| `retiming_blackbox`     | `BlackBoxRetiming`    | model-agnostic sampled temporal shift (rate-preserving) |
-| `retiming_pil`          | `PILRetimingAttack`   | white-box projected-in-the-loop optimisation |
+| name (`build_attack`)   | class                 | family      | notes |
+|-------------------------|-----------------------|-------------|-------|
+| `none` / `clean`        | `IdentityThreat`      | `base`      | no-op baseline |
+| `retiming_blackbox`     | `BlackBoxRetiming`    | `retiming`  | model-agnostic sampled temporal shift (rate-preserving) |
+| `retiming_pil`          | `PILRetimingAttack`   | `retiming`  | white-box projected-in-the-loop optimisation |
+| `fgsm`                  | `FGSMAttack`          | `fgsm_pgd`  | white-box single-step L-infinity attack, maximises EPE |
+| `pgd`                   | `PGDAttack`           | `fgsm_pgd`  | white-box iterative, projected L-infinity attack |
+
+`fgsm`/`pgd` reproduce the surrogate-gradient BPTT FGSM/PGD attack technique of
+Sharmin et al., "Inherent Adversarial Robustness of Deep Spiking Neural
+Networks" (arXiv:2003.10399), retargeted from static-image classification to
+dense flow regression on event tensors — see `attacks/fgsm_pgd/attack.py` for
+the full reproduced-vs-changed mapping. Use `attacks/fgsm_pgd/calibrate_epsilon.py`
+to pick a data-grounded `epsilon` and `attacks/fgsm_pgd/attack_health.py` to
+confirm the attack is actually exploiting gradients rather than hitting a
+vanishing-gradient wall.
 
 ## Usage
 
@@ -41,13 +66,18 @@ python evaluate_attack.py --attack retiming_blackbox --budget 2 --visualize
 
 ## Adding a new threat
 
-1. Create a class in a new module (or in an existing one), subclassing
-   `EventThreat` and decorating it with `@register_threat("my_threat")`.
-2. Implement `perturb(self, chunk, *, model=None, label=None, mask=None)` and
+1. Either add to an existing family (e.g. a new module inside `retiming/` or
+   `fgsm_pgd/`) or create a new subpackage `attacks/<family>/` for a genuinely
+   new attack family, with its own `__init__.py` re-exporting its classes
+   (mirror `attacks/fgsm_pgd/__init__.py`).
+2. Subclass `EventThreat` (import it via `from ..base import EventThreat,
+   register_threat` if nested one level deep) and decorate with
+   `@register_threat("my_threat")`.
+3. Implement `perturb(self, chunk, *, model=None, label=None, mask=None)` and
    return a perturbed `[B, C, T, H, W]` tensor.
-3. If it lives in a new module, import that module in `attacks/__init__.py` so the
-   registration runs.
-4. Select it anywhere with `build_attack("my_threat", **cfg)` — including
+4. Import the new subpackage/module in `attacks/__init__.py` so the
+   registration runs (mirror the existing `retiming`/`fgsm_pgd` imports).
+5. Select it anywhere with `build_attack("my_threat", **cfg)` — including
    `python evaluate_attack.py --attack my_threat`.
 
 ```python
@@ -62,7 +92,8 @@ class EventInjection(EventThreat):
 
 ## Reference
 
-Spike-retiming method re-implemented from Yu et al., *"Time Is All It Takes:
+- Spike-retiming method re-implemented from Yu et al., *"Time Is All It Takes:
 Spike-Retiming Attacks on Event-Driven Spiking Neural Networks"* (ICLR 2026). Only
 the method (threat model + projected-in-the-loop optimisation) is reused; no code
 from the reference repository is copied.
+- FGSM/PGD attack method re-implemented from Sharmin et al., *"Inherent Adversarial Robustness of Deep Spiking Neural Networks: Effects of Discrete Input Encoding and Non-Linear Activations"* (ECCV 2020). The concept and Algorithm 1 for FGSM is reused and adapted for the optical flow estimation case and the type of input data used for this SNN. No source code from https://github.com/ssharmin/spikingNN-adversarial-attack was re-used.
