@@ -18,6 +18,12 @@ White-box projected-in-the-loop retiming::
 
     python evaluate_attack.py --attack retiming_pil --budget 2 --iters 10
 
+White-box FGSM / PGD on the raw event-count tensor (see
+``attacks/calibrate_epsilon.py`` for choosing ``--epsilon``)::
+
+    python evaluate_attack.py --attack fgsm --epsilon 2.0
+    python evaluate_attack.py --attack pgd --epsilon 2.0 --alpha 0.5 --iters 7
+
 The threat is selected by name from the modular ``attacks`` registry, so new
 threats are usable here without changing this file.
 """
@@ -33,14 +39,17 @@ from tqdm import tqdm
 
 from spikingjelly.clock_driven import functional
 
-from network_3d.poolingNet_cat_1res import NeuronPool_Separable_Pool3d
-from data.dsec_dataset_lite_stereo_21x9 import DSECDatasetLite
 from eval.vector_loss_functions import (
     mod_loss_function,
     angular_loss_function,
     cosine_loss_function,
 )
-from attacks import build_attack
+from attacks.cli_common import (
+    add_common_attack_args,
+    add_common_model_args,
+    build_threat_from_args,
+    load_model_and_data,
+)
 
 RAD2DEG = 180.0 / math.pi
 
@@ -48,39 +57,13 @@ RAD2DEG = 180.0 / math.pi
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--attack", default="none",
-                   help="Threat name (e.g. none, retiming_blackbox, retiming_pil).")
-    p.add_argument("--budget", type=int, default=2, help="Max temporal shift in bins.")
-    p.add_argument("--granularity", default=None,
-                   help="pixel | block | global (default: threat's own default).")
-    p.add_argument("--mode", default="random",
-                   help="Black-box sampling mode: random | worst_of_n.")
-    p.add_argument("--n-samples", type=int, default=8, help="Candidates for worst_of_n.")
-    p.add_argument("--iters", type=int, default=10, help="PIL optimisation steps.")
-    p.add_argument("--loss", default="angular", help="PIL objective: angular | cosine.")
-    p.add_argument("--seed", type=int, default=2305, help="Attack sampling seed.")
-    p.add_argument("--root", default="data/dataset/saved_flow_data",
-                   help="Dataset root (relative path).")
-    p.add_argument("--split", default="valid_split_thun_00_a.csv", help="Sequence list CSV.")
-    p.add_argument("--num-frames-per-ts", type=int, default=11)
-    p.add_argument("--checkpoint", default="examples/checkpoint_epoch34.pth")
-    p.add_argument("--multiply-factor", type=float, default=35.0)
-    p.add_argument("--max-chunks", type=int, default=None,
-                   help="Limit number of samples (useful on CPU).")
+    add_common_attack_args(p)
+    add_common_model_args(p)
     p.add_argument("--visualize", action="store_true",
                    help="Also write clean/attacked flow videos to results/.")
     p.add_argument("--fps", type=int, default=10, help="Video frame rate.")
     p.add_argument("--outdir", default="results")
     return p.parse_args()
-
-
-def build_threat(args):
-    """Assemble threat kwargs, only overriding granularity when the user set it."""
-    cfg = dict(budget=args.budget, mode=args.mode, n_samples=args.n_samples,
-               iters=args.iters, loss=args.loss, seed=args.seed)
-    if args.granularity is not None:
-        cfg["granularity"] = args.granularity
-    return build_attack(args.attack, **cfg)
 
 
 @torch.no_grad()
@@ -100,22 +83,13 @@ def metrics(pred, label, mask):
 
 def main():
     args = parse_args()
-    device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
     os.makedirs(args.outdir, exist_ok=True)
 
-    print(f"Device: {device}")
     print("Creating validation dataset ...")
-    dataset = DSECDatasetLite(root=args.root, file_list=args.split,
-                              num_frames_per_ts=args.num_frames_per_ts,
-                              stereo=False, transform=None)
-    loader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False,
-                                         drop_last=False, pin_memory=True)
+    device, net, dataset, loader = load_model_and_data(args)
+    print(f"Device: {device}")
 
-    net = NeuronPool_Separable_Pool3d(multiply_factor=args.multiply_factor).to(device)
-    net.load_state_dict(torch.load(args.checkpoint, map_location=device))
-    net.eval()
-
-    threat = build_threat(args)
+    threat = build_threat_from_args(args)
     print(f"Threat: {threat}")
 
     # Metric accumulators (clean, attacked).
@@ -168,8 +142,9 @@ def main():
 
     # ---- Report -----------------------------------------------------------
     print(f"\nEvaluated {n} samples | attack = '{args.attack}'")
-    print(f"Rate-preservation check: max |sum(adv) - sum(clean)| = "
-          f"{max_count_drift:.6g} (0 = perfectly rate-preserving)\n")
+    print(f"Count drift: max |sum(adv) - sum(clean)| = {max_count_drift:.6g} "
+          f"(0 = perfectly rate-preserving; retiming_* attacks should be ~0, "
+          f"a large value is *expected* for additive attacks like fgsm/pgd)\n")
     header = f"{'metric':<16}{'clean':>12}{'attacked':>12}{'delta':>12}"
     print(header)
     print("-" * len(header))

@@ -10,12 +10,12 @@ network, dataset, or evaluation loop.
 ```
 attacks/
   base.py               EventThreat ABC, @register_threat, build_attack registry
+  cli_common.py          shared CLI flags + model/data loading for the scripts below
   retiming/              timing-only, rate-preserving spike-retiming attacks
     spike_retiming.py    BlackBoxRetiming, PILRetimingAttack
   fgsm_pgd/               additive L-infinity attacks on the raw event-count tensor
     attack.py            FGSMAttack, PGDAttack
     calibrate_epsilon.py  data-grounded epsilon budget from real event-count stats
-    attack_health.py      PGD-vs-FGSM gradient-health diagnostic
   compare_easy_hard.py   generic clean/attacked comparison across two conditions
 ```
 
@@ -40,14 +40,9 @@ the model-input event tensor and returns an adversarial copy of the same shape.
 | `fgsm`                  | `FGSMAttack`          | `fgsm_pgd`  | white-box single-step L-infinity attack, maximises EPE |
 | `pgd`                   | `PGDAttack`           | `fgsm_pgd`  | white-box iterative, projected L-infinity attack |
 
-`fgsm`/`pgd` reproduce the surrogate-gradient BPTT FGSM/PGD attack technique of
-Sharmin et al., "Inherent Adversarial Robustness of Deep Spiking Neural
-Networks" (arXiv:2003.10399), retargeted from static-image classification to
-dense flow regression on event tensors — see `attacks/fgsm_pgd/attack.py` for
+— see `attacks/fgsm_pgd/attack.py` for
 the full reproduced-vs-changed mapping. Use `attacks/fgsm_pgd/calibrate_epsilon.py`
-to pick a data-grounded `epsilon` and `attacks/fgsm_pgd/attack_health.py` to
-confirm the attack is actually exploiting gradients rather than hitting a
-vanishing-gradient wall.
+to pick a data-grounded `epsilon`.
 
 ## Usage
 
@@ -79,6 +74,14 @@ python evaluate_attack.py --attack retiming_blackbox --budget 2 --visualize
    registration runs (mirror the existing `retiming`/`fgsm_pgd` imports).
 5. Select it anywhere with `build_attack("my_threat", **cfg)` — including
    `python evaluate_attack.py --attack my_threat`.
+6. Optional self-reporting hooks: if the threat is gradient-based/iterative,
+   accept a `record_history: bool = False` constructor kwarg (pass it to
+   `super().__init__(...)` like the other kwargs) and call
+   `self._record(loss, grad_metric)` once per optimisation step -- record the
+   *true* loss being maximised, not a sign-flipped/regularised objective. If
+   it has a formal invariant (a budget, a preserved quantity, ...), override
+   `verify_constraint(self, chunk, adv) -> dict` and return at least
+   `{"passed": bool, "description": str}`. Neither is required.
 
 ```python
 from attacks.base import EventThreat, register_threat
@@ -96,4 +99,6 @@ class EventInjection(EventThreat):
 Spike-Retiming Attacks on Event-Driven Spiking Neural Networks"* (ICLR 2026). Only
 the method (threat model + projected-in-the-loop optimisation) is reused; no code
 from the reference repository is copied.
-- FGSM/PGD attack method re-implemented from Sharmin et al., *"Inherent Adversarial Robustness of Deep Spiking Neural Networks: Effects of Discrete Input Encoding and Non-Linear Activations"* (ECCV 2020). The concept and Algorithm 1 for FGSM is reused and adapted for the optical flow estimation case and the type of input data used for this SNN. No source code from https://github.com/ssharmin/spikingNN-adversarial-attack was re-used.
+- FGSM/PGD attack method re-implemented from Sharmin et al., *"Inherent Adversarial Robustness of Deep Spiking Neural Networks: Effects of Discrete Input Encoding and Non-Linear Activations"* (ECCV 2020). The concept and Algorithm 1 for FGSM is retargeted from static-image classification to
+the dense flow regression on event tensors used with this SNN. No source code from https://github.com/ssharmin/spikingNN-adversarial-attack was re-used.
+
