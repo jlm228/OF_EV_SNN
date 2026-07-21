@@ -26,7 +26,7 @@ to the network, dataset, or evaluation loop is required.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Optional, Type
+from typing import Dict, List, Optional, Tuple, Type
 
 from torch import Tensor
 
@@ -65,6 +65,12 @@ class EventThreat(ABC):
     def __init__(self, **config):
         # Store the config verbatim so threats are self-describing / reproducible.
         self.config = config
+        # Per-iteration (loss, grad_metric) trace, populated via `_record` by
+        # gradient-based/iterative threats when `record_history=True` is passed.
+        # Every threat gets this for free (empty by default) so callers never
+        # need `hasattr` guards, just `len(attack.history)` to detect whether
+        # the attack is iterative.
+        self.history: List[Tuple[float, Optional[float]]] = []
 
     @abstractmethod
     def perturb(
@@ -87,6 +93,30 @@ class EventThreat(ABC):
             Ground-truth flow ``[B, 2, H, W]`` and validity mask; needed by
             optimisation-based threats.
         """
+
+    def verify_constraint(self, chunk: Tensor, adv: Tensor) -> dict:
+        """Self-report whether ``adv`` respects this threat's own invariant.
+
+        Default: no invariant declared (returns ``{}``). Threats with a formal
+        constraint (e.g. an L-infinity budget, exact rate preservation) should
+        override this and return at least ``{"passed": bool, "description": str}``
+        plus whatever family-specific numeric diagnostics are relevant -- the
+        fields legitimately differ per family, that's intentional.
+        """
+        return {}
+
+    def _record(self, loss: float, grad_metric: Optional[float] = None) -> None:
+        """Append one ``(loss, grad_metric)`` entry to ``self.history``.
+
+        No-op unless the threat was built with ``record_history=True`` (read
+        from ``self.config``, set by threats that accept it as a constructor
+        kwarg). ``grad_metric`` is optional and its meaning/scale is
+        threat-specific (e.g. an input-gradient L-infinity norm for FGSM/PGD
+        vs. a logit-gradient norm for PILRetimingAttack) -- callers must never
+        compare it across threat classes, only loss trajectories are portable.
+        """
+        if self.config.get("record_history"):
+            self.history.append((loss, grad_metric))
 
     # Callable so a threat can be dropped into a pipeline like a transform.
     def __call__(self, chunk, *, model=None, label=None, mask=None) -> Tensor:

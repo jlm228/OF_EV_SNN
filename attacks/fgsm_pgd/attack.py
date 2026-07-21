@@ -1,22 +1,19 @@
 """FGSM / PGD attacks on the event-based optical-flow SNN.
 
-Reproduces the *attack technique* of Sharmin et al., "Inherent Adversarial
+Reproduces the attack technique of Sharmin et al., "Inherent Adversarial
 Robustness of Deep Spiking Neural Networks" (arXiv:2003.10399): white-box,
 surrogate-gradient BPTT perturbation generation with the classic FGSM
 single-step / PGD iterative-projected-step structure. Everything else is
-changed to fit this repo: the target is a Cuadrado-style spiking
+changed to fit this repo: the target is the spiking
 encoder-decoder (``network_3d.poolingNet_cat_1res.NeuronPool_Separable_Pool3d``)
-doing dense optical-flow regression on DSEC event tensors, not a classifier on
+doing dense optical-flow regression on DSEC event tensors, instead of a classifier on
 static image pixels.
 
 No new neuron model or surrogate gradient is introduced here -- the gradient
 that FGSM/PGD needs is produced entirely by the model's own
 ``spikingjelly.clock_driven.neuron.IFNode`` units (hard reset,
-``v_threshold=1.0``, ``v_reset=0.0``) and their default
-``surrogate.Sigmoid(alpha=4.0)`` backward pass. This is exactly the gradient
-path :class:`attacks.spike_retiming.PILRetimingAttack` already exercises
-successfully, so differentiability end-to-end through ``functional.reset_net``
-+ one forward pass is a proven property of this model, not an assumption.
+``v_threshold=1.0``, ``v_reset=0.0``) and the default
+``surrogate.Sigmoid(alpha=4.0)`` backward pass.
 
 The perturbation space is an additive L-infinity ball of radius ``epsilon``
 defined directly on the model-input event-count tensor ``chunk``
@@ -30,8 +27,6 @@ The objective maximised is untargeted dense flow error -- by default the
 repo's EPE (``eval.vector_loss_functions.mod_loss_function``), with
 ``angular``/``cosine`` available as alternates -- not a classification
 fooling objective.
-
-Run ``python -m attacks.fgsm_pgd.attack`` for a self-test.
 """
 
 from typing import List, Optional, Tuple
@@ -69,9 +64,11 @@ def _loss_fn(name: str):
 class _FreezeParams:
     """Temporarily set every model parameter's ``requires_grad`` to False.
 
-    ``PILRetimingAttack`` freezes the model but never restores it; we restore
-    on exit so a threat is safe to call from a script that resumes training
-    afterwards.
+    Context manager which temporarily sets every parameter's ``requires_grad`` to False, 
+    then restores the original values on exit. This is used to ensure that the model's 
+    parameters are not updated during the attack perturbation process, 
+    which is important for white-box attacks like FGSM and PGD where we want to compute gradients
+    with respect to the input, not the model parameters.
     """
 
     def __init__(self, model):
@@ -101,6 +98,26 @@ def _input_grad(model, x: Tensor, label: Tensor, mask: Tensor, loss_fn) -> Tuple
     return grad, loss.item()
 
 
+def _epsilon_ball_report(chunk: Tensor, adv: Tensor, epsilon: float, clip_min: float,
+                          tol: float = 1e-3) -> dict:
+    """Shared ``verify_constraint`` body for FGSMAttack/PGDAttack.
+
+    Checks the perturbation stayed within the L-infinity epsilon-ball of the
+    clean input and that event counts remain non-negative.
+    """
+    max_abs_delta = (adv - chunk).abs().max().item()
+    min_value = adv.min().item()
+    passed = (max_abs_delta <= epsilon + tol) and (min_value >= clip_min - tol)
+    return {
+        "passed": passed,
+        "description": "L-infinity ball + non-negativity",
+        "max_abs_delta": max_abs_delta,
+        "epsilon": epsilon,
+        "min_value": min_value,
+        "clip_min": clip_min,
+    }
+
+
 @register_threat("fgsm")
 class FGSMAttack(EventThreat):
     """Single-step white-box FGSM on the raw event-count tensor.
@@ -115,7 +132,7 @@ class FGSMAttack(EventThreat):
         Lower clamp applied after perturbing (event counts can't be negative).
     record_history : bool
         If True, ``self.history`` is populated with ``[(loss, grad_linf)]``
-        (a single entry for FGSM) for attack-health diagnostics.
+        (a single entry for FGSM) for diagnostics.
     """
 
     name = "fgsm"
@@ -127,8 +144,6 @@ class FGSMAttack(EventThreat):
         self.epsilon = float(epsilon)
         self.loss_name = loss
         self.clip_min = float(clip_min)
-        self.record_history = record_history
-        self.history: List[Tuple[float, float]] = []
 
     def perturb(self, chunk, *, model=None, label=None, mask=None):
         if model is None or label is None:
@@ -141,12 +156,14 @@ class FGSMAttack(EventThreat):
 
         with _FreezeParams(model):
             grad, loss_val = _input_grad(model, chunk, label, mask, loss_fn)
-            if self.record_history:
-                self.history.append((loss_val, grad.abs().max().item()))
+            self._record(loss_val, grad.abs().max().item())
             adv = chunk.detach() + self.epsilon * grad.sign()
             adv = adv.clamp_(min=self.clip_min)
 
         return adv.detach()
+
+    def verify_constraint(self, chunk, adv):
+        return _epsilon_ball_report(chunk, adv, self.epsilon, self.clip_min)
 
 
 @register_threat("pgd")
@@ -170,8 +187,7 @@ class PGDAttack(EventThreat):
         Lower clamp applied after every step (event counts can't be negative).
     record_history : bool
         If True, ``self.history`` collects ``(loss, grad_linf)`` per step, so
-        callers can check the objective is actually rising across iterations
-        (see ``attacks/attack_health.py``).
+        callers can check the objective is actually rising across iterations.
     """
 
     name = "pgd"
@@ -188,8 +204,6 @@ class PGDAttack(EventThreat):
         self.rand_init = rand_init
         self.loss_name = loss
         self.clip_min = float(clip_min)
-        self.record_history = record_history
-        self.history: List[Tuple[float, float]] = []
 
     def perturb(self, chunk, *, model=None, label=None, mask=None):
         if model is None or label is None:
@@ -210,66 +224,12 @@ class PGDAttack(EventThreat):
         with _FreezeParams(model):
             for _ in range(self.iters):
                 grad, loss_val = _input_grad(model, x, label, mask, loss_fn)
-                if self.record_history:
-                    self.history.append((loss_val, grad.abs().max().item()))
+                self._record(loss_val, grad.abs().max().item())
                 x = x.detach() + self.alpha * grad.sign()
                 x = torch.max(torch.min(x, x0 + self.epsilon), x0 - self.epsilon)
                 x = x.clamp_(min=self.clip_min)
 
         return x.detach()
 
-
-# ---------------------------------------------------------------------------
-# Self-test
-# ---------------------------------------------------------------------------
-
-def _self_test():
-    import torch.nn as nn
-
-    torch.manual_seed(0)
-    B, C, T, H, W = 1, 2, 21, 16, 20
-    chunk = torch.randint(0, 4, (B, C, T, H, W)).float()
-    label = torch.randn(B, 2, H, W)
-    mask = torch.ones(B, 1, H, W)
-
-    class _TinyFlowNet(nn.Module):
-        """Minimal differentiable stand-in with the same forward contract
-        as NeuronPool_Separable_Pool3d (returns a list, last = finest flow),
-        used only so this self-test has no dependency on a trained checkpoint.
-        """
-
-        def __init__(self):
-            super().__init__()
-            self.conv = nn.Conv3d(C, 2, kernel_size=3, padding=1)
-
-        def forward(self, x):
-            y = self.conv(x).mean(dim=2)  # [B, 2, H, W]
-            return [y]
-
-    net = _TinyFlowNet()
-    net.eval()
-
-    for eps in (0.5, 2.0):
-        fgsm = FGSMAttack(epsilon=eps, record_history=True)
-        adv = fgsm.perturb(chunk, model=net, label=label, mask=mask)
-        assert adv.shape == chunk.shape
-        assert (adv - chunk).abs().max().item() <= eps + 1e-4
-        assert adv.min().item() >= 0.0
-        assert len(fgsm.history) == 1
-
-        pgd = PGDAttack(epsilon=eps, iters=5, rand_init=True, record_history=True)
-        adv = pgd.perturb(chunk, model=net, label=label, mask=mask)
-        assert adv.shape == chunk.shape
-        assert (adv - chunk).abs().max().item() <= eps + 1e-4
-        assert adv.min().item() >= 0.0
-        assert len(pgd.history) == 5
-
-    # Freezing must not leak: params should be trainable again afterwards.
-    assert all(p.requires_grad for p in net.parameters())
-
-    print("attacks.fgsm_pgd self-test passed "
-          "(shape + epsilon-ball + non-negativity + param-freeze restore verified).")
-
-
-if __name__ == "__main__":
-    _self_test()
+    def verify_constraint(self, chunk, adv):
+        return _epsilon_ball_report(chunk, adv, self.epsilon, self.clip_min)

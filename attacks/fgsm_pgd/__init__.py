@@ -1,8 +1,7 @@
 """FGSM/PGD attack family (additive L-infinity perturbations on event counts).
 
-See ``attack.py`` for the attack classes, ``calibrate_epsilon.py`` for picking
-a data-grounded epsilon budget, and ``attack_health.py`` for the PGD-vs-FGSM
-gradient-health diagnostic.
+See ``attack.py`` for the attack classes and ``calibrate_epsilon.py`` for
+picking a data-grounded epsilon budget.
 """
 
 from . import attack  # noqa: F401
