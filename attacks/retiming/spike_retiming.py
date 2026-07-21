@@ -22,7 +22,7 @@ Two threats are provided:
 
 Both operate on the model-input tensor ``[B, C, T, H, W]`` (time = dim 2).
 
-Run ``python -m attacks.spike_retiming`` for a self-test.
+Run ``python -m attacks.retiming.spike_retiming`` for a self-test.
 """
 
 import math
@@ -35,7 +35,7 @@ from spikingjelly.clock_driven import functional
 
 from eval.vector_loss_functions import angular_loss_function, cosine_loss_function
 
-from .base import EventThreat, register_threat
+from ..base import EventThreat, register_threat
 
 
 # ---------------------------------------------------------------------------
