@@ -30,9 +30,8 @@ def register_threat(*names: str):
         for name in names:
             key = name.lower()
             existing = THREAT_REGISTRY.get(key)
-            # Allow re-registration by the same class (e.g. a module re-imported
-            # under both its package name and __main__ via ``python -m``); only a
-            # genuinely different threat class reusing the name is an error.
+            # Re-registration by the same class is fine (e.g. re-imported via
+            # ``python -m``); a different class reusing the name is an error.
             if existing is not None and existing.__name__ != cls.__name__:
                 raise KeyError(
                     f"Threat name '{name}' is already registered to "
@@ -51,13 +50,11 @@ class EventThreat(ABC):
     name: str = "base"
 
     def __init__(self, **config):
-        # Store the config verbatim so threats are self-describing / reproducible.
+        # Kept verbatim so threats are self-describing / reproducible.
         self.config = config
-        # Per-iteration (loss, grad_metric) trace, populated via `_record` by
-        # gradient-based/iterative threats when `record_history=True` is passed.
-        # Every threat gets this for free (empty by default) so callers never
-        # need `hasattr` guards, just `len(attack.history)` to detect whether
-        # the attack is iterative.
+        # Per-iteration (loss, grad_metric) trace, filled by `_record` when
+        # `record_history=True`. Empty on non-iterative threats, so callers can
+        # use `len(attack.history)` instead of `hasattr` guards.
         self.history: List[Tuple[float, Optional[float]]] = []
 
     @abstractmethod
@@ -85,23 +82,19 @@ class EventThreat(ABC):
     def verify_constraint(self, chunk: Tensor, adv: Tensor) -> dict:
         """Self-report whether ``adv`` respects this threat's own invariant.
 
-        Default: no invariant declared (returns ``{}``). Threats with a formal
-        constraint (e.g. an L-infinity budget, exact rate preservation) should
-        override this and return at least ``{"passed": bool, "description": str}``
-        plus whatever family-specific numeric diagnostics are relevant -- the
-        fields legitimately differ per family, that's intentional.
+        Default: no invariant, returns ``{}``. Threats with a formal constraint
+        (e.g. an L-infinity budget) should override this to return at least
+        ``{"passed": bool, "description": str}`` plus any family-specific
+        diagnostics.
         """
         return {}
 
     def _record(self, loss: float, grad_metric: Optional[float] = None) -> None:
         """Append one ``(loss, grad_metric)`` entry to ``self.history``.
 
-        No-op unless the threat was built with ``record_history=True`` (read
-        from ``self.config``, set by threats that accept it as a constructor
-        kwarg). ``grad_metric`` is optional and its meaning/scale is
-        threat-specific (e.g. an input-gradient L-infinity norm for FGSM/PGD
-        vs. a logit-gradient norm for PILRetimingAttack) -- callers must never
-        compare it across threat classes, only loss trajectories are portable.
+        No-op unless built with ``record_history=True``. ``grad_metric`` is
+        threat-specific in meaning and scale, so don't compare it across threat
+        classes; only loss trajectories are portable.
         """
         if self.config.get("record_history"):
             self.history.append((loss, grad_metric))
@@ -127,9 +120,8 @@ class IdentityThreat(EventThreat):
 def build_attack(name: Optional[str], **cfg) -> EventThreat:
     """Instantiate a registered threat by name.
 
-    ``name`` of ``None`` / ``"none"`` / ``"clean"`` yields the no-op
-    :class:`IdentityThreat`.  Unknown config keys are simply stored on the
-    threat, so callers may pass a superset of options without error.
+    ``None`` / ``"none"`` / ``"clean"`` yields the no-op :class:`IdentityThreat`.
+    Unknown config keys are just stored, so callers may pass a superset.
     """
     key = "none" if name is None else str(name).lower()
     if key not in THREAT_REGISTRY:
