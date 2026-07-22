@@ -1,11 +1,11 @@
-"""Calibrate an L-infinity epsilon budget for the fgsm/pgd threats.
+"""Calibrate an L-infinity epsilon budget for the fgsm/pgd threats, for the DSEC dataset.
 
-FGSM/PGD in this repo perturb raw event *counts* directly, not normalised
-pixel intensities, so the usual ``eps/255`` convention doesn't transfer. This
-script grounds ``epsilon`` in the data instead: it scans a sample of the
-*training* split's event tensors, computes per-polarity-channel statistics of
-the nonzero bin counts, and prints/saves a suggested epsilon table expressed
-as small multiples of the mean nonzero count.
+FGSM/PGD in this repo perturb raw event counts directly. Therefore, the
+'eps/255' convention from the original image-based attacks cannot apply here.
+
+This script scans a sample of the training data's event-count tensors,
+computing per-polarity-channel statistics of the nonzero bin counts, and saves
+a suggested epsilon table expressed as small multiples of the mean nonzero count.
 
 Usage::
 

@@ -1,28 +1,16 @@
-"""Modular cybersecurity-threat framework for the event-based optical-flow SNN.
+"""Modular threat framework for an event-based optical flow SNN.
 
-A *threat* perturbs the model-input event tensor ``chunk`` of shape
-``[B, C, T, H, W]`` (i.e. after the ``torch.transpose(chunk, 1, 2)`` performed by
-the eval/train loops, so the **time axis is dim 2**, ``C = 2`` ON/OFF polarity
-channels, ``T = 21`` temporal bins).
+A threat pertubs the model's input event tensor ``chunk`` of shape ``[B, C, T, H, W]``.
+Where:
+- ``B`` is the batch size,
+- ``C`` is the number of channels (2 for ON/OFF polarity),
+- ``T`` is the number of temporal bins (21),
+- ``H`` is the height of the input,
+- ``W`` is the width of the input.
 
-The design mirrors the existing data-augmentation pipeline
-(``data/data_augmentation_2d.py``): each threat is a small callable class.  It is
-kept as a dedicated base class rather than a ``torchvision`` transform because
-white-box threats additionally need access to the ``model`` and a ``label`` to
-optimise against.
-
-Adding a new threat is intentionally a one-file change::
-
-    from attacks.base import EventThreat, register_threat
-
-    @register_threat("my_threat")
-    class MyThreat(EventThreat):
-        def perturb(self, chunk, *, model=None, label=None, mask=None):
-            ...
-            return adv_chunk
-
-...then reference it by name via ``build_attack("my_threat", **cfg)``.  No change
-to the network, dataset, or evaluation loop is required.
+The design mirrors the existing data-augmentation pipeline (``data/data_augmentation_2d.py``)
+from Cuadrado et al.: "Optical flow estimation from event-based cameras and spiking neural 
+networks" (arXiv:2302.06492).
 """
 
 from abc import ABC, abstractmethod

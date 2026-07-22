@@ -1,9 +1,6 @@
 # `attacks/` — modular cybersecurity threat suite
 
-Threats that perturb the event input to the optical-flow SNN, for robustness /
-security analysis. Each attack *family* lives in its own subpackage, but all
-of them plug into the same `EventThreat` registry without touching the
-network, dataset, or evaluation loop.
+Threats that perturb the event input to the optical-flow SNN. Each attack *family* lives in its own subpackage, but all of them plug into the same `EventThreat` registry without touching the network, dataset, or evaluation loop.
 
 ## Layout
 
@@ -14,8 +11,10 @@ attacks/
   retiming/              timing-only, rate-preserving spike-retiming attacks
     spike_retiming.py    BlackBoxRetiming, PILRetimingAttack
   fgsm_pgd/               additive L-infinity attacks on the raw event-count tensor
-    attack.py            FGSMAttack, PGDAttack
-    calibrate_epsilon.py  data-grounded epsilon budget from real event-count stats
+    _common.py            common functions for attacks in this module
+    calibrate_epsilon.py  script for picking an epsilon budgetm from the input data
+    fgsm.py               FGSMAttack
+    pdg.py                PDGAttack
   compare_easy_hard.py   generic clean/attacked comparison across two conditions
 ```
 
@@ -35,14 +34,10 @@ the model-input event tensor and returns an adversarial copy of the same shape.
 | name (`build_attack`)   | class                 | family      | notes |
 |-------------------------|-----------------------|-------------|-------|
 | `none` / `clean`        | `IdentityThreat`      | `base`      | no-op baseline |
-| `retiming_blackbox`     | `BlackBoxRetiming`    | `retiming`  | model-agnostic sampled temporal shift (rate-preserving) |
-| `retiming_pil`          | `PILRetimingAttack`   | `retiming`  | white-box projected-in-the-loop optimisation |
+| `retiming_blackbox`     | `BlackBoxRetiming`    | `spike_retiming`  | model-agnostic sampled temporal shift (rate-preserving) |
+| `retiming_pil`          | `PILRetimingAttack`   | `spike_retiming`  | white-box projected-in-the-loop optimisation |
 | `fgsm`                  | `FGSMAttack`          | `fgsm_pgd`  | white-box single-step L-infinity attack, maximises EPE |
 | `pgd`                   | `PGDAttack`           | `fgsm_pgd`  | white-box iterative, projected L-infinity attack |
-
-— see `attacks/fgsm_pgd/attack.py` for
-the full reproduced-vs-changed mapping. Use `attacks/fgsm_pgd/calibrate_epsilon.py`
-to pick a data-grounded `epsilon`.
 
 ## Usage
 
