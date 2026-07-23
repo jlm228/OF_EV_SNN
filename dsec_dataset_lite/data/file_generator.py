@@ -27,7 +27,10 @@ def generate_files(root: str, sequence: str, num_frames_per_ts: int = 1):
     eventsL_path = os.path.join(root, 'train', sequence, 'events', 'left')
 
 
-    save_path_events = os.path.join(root, 'saved_flow_data', 'event_tensors',  '{}frames'.format(str(num_frames_per_ts).zfill(2)), 'left')
+    # Mono/non-stereo eval: the dataset loader (stereo=False) reads event tensors from
+    # event_tensors/<N>frames/ directly, NOT from a nested left/ subdir. Write there so the
+    # generated files are picked up with no manual move (matches the shipped thun_00_a tensors).
+    save_path_events = os.path.join(root, 'saved_flow_data', 'event_tensors',  '{}frames'.format(str(num_frames_per_ts).zfill(2)))
     print(save_path_events)
     _load_events(sequence, num_frames_per_ts, eventsL_path, timestamps, save_path_events)
 
