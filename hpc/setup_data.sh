@@ -21,6 +21,21 @@ if [ ${#SEQUENCES[@]} -eq 0 ]; then
     SEQUENCES=(thun_00_a zurich_city_02_d zurich_city_03_a zurich_city_08_a zurich_city_11_b)
 fi
 
+# Relative paths resolve against the caller's working directory, so running this from
+# anywhere but the repo root would quietly build the tree in the wrong place. The split
+# CSVs are committed, so their absence means DATA_DIR is not the repo's data/dataset.
+if [ ! -d "${DATA_DIR}/saved_flow_data/sequence_lists" ]; then
+    echo "ERROR: ${DATA_DIR}/saved_flow_data/sequence_lists not found."
+    echo "Run this from the repository root, e.g."
+    echo "  cd ~/OF_EV_SNN && bash hpc/setup_data.sh ${ZIP_DIR} data/dataset ${SEQUENCES[*]}"
+    exit 1
+fi
+
+if [ ! -d "${ZIP_DIR}" ]; then
+    echo "ERROR: zip directory '${ZIP_DIR}' does not exist."
+    exit 1
+fi
+
 for seq in "${SEQUENCES[@]}"; do
     echo "=== ${seq} ==="
     events_dir="${DATA_DIR}/train/${seq}/events/left"

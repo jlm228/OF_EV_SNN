@@ -20,14 +20,7 @@
 
 set -e
 
-module purge; module load bluebear
-module load Python/3.11.3-GCCcore-12.3.0    # TODO: confirm with `module avail Python`
-
-source "${HOME}/venvs/of_ev_snn/bin/activate"
-
-# imageio fetches the FreeImage library on first use and compute nodes have no internet,
-# so point it at a cache populated on the login node (see hpc/README.md).
-export IMAGEIO_USERDIR="${HOME}/.imageio"
+source "${SLURM_SUBMIT_DIR}/hpc/env.sh"
 
 SEQUENCES=(thun_00_a zurich_city_02_d zurich_city_03_a zurich_city_08_a zurich_city_11_b)
 SEQUENCE="${SEQUENCES[${SLURM_ARRAY_TASK_ID:-0}]}"
