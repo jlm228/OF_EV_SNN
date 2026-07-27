@@ -10,14 +10,6 @@ Clean baseline::
 
     python evaluate_attack.py --attack none
 
-Black-box spike-retiming with qualitative videos::
-
-    python evaluate_attack.py --attack retiming_blackbox --budget 2 --visualize
-
-White-box projected-in-the-loop retiming::
-
-    python evaluate_attack.py --attack retiming_pil --budget 2 --iters 10
-
 White-box FGSM / PGD on the raw event-count tensor (see
 ``attacks/calibrate_epsilon.py`` for choosing ``--epsilon``)::
 
@@ -32,8 +24,11 @@ import argparse
 import csv
 import math
 import os
+import re
+from collections import OrderedDict
 
 import numpy as np
+import pandas as pd
 import torch
 from tqdm import tqdm
 
@@ -62,8 +57,24 @@ def parse_args():
     p.add_argument("--visualize", action="store_true",
                    help="Also write clean/attacked flow videos to results/.")
     p.add_argument("--fps", type=int, default=10, help="Video frame rate.")
+    p.add_argument("--per-sample", action="store_true",
+                   help="Also write per-sample and per-sequence-summary CSVs to results/.")
     p.add_argument("--outdir", default="results")
     return p.parse_args()
+
+
+def load_sample_names(args):
+    """Ordered (sequence, filename) for each loader sample, from the split CSV.
+
+    ``DSECDatasetLite`` iterates the split rows in order (``shuffle=False``) and takes each
+    sample's label/mask from the *second* file in the row, so that column is the canonical
+    per-sample identity. Reconstructing here avoids changing the dataset's return signature.
+    """
+    split_path = os.path.join(args.root, "sequence_lists", args.split)
+    rows = pd.read_csv(split_path, header=None)
+    names = rows.iloc[:, 1].tolist()
+    seqs = [re.sub(r"_\d+\.npy$", "", nm) for nm in names]
+    return seqs, names
 
 
 @torch.no_grad()
@@ -99,6 +110,12 @@ def main():
     n = 0
     max_count_drift = 0.0
 
+    # Per-sample identity + rows, only when requested.
+    seqs = names = None
+    if args.per_sample:
+        seqs, names = load_sample_names(args)
+    per_sample = []
+
     # Sequences for optional visualisation.
     label_seq, mask_seq, pred_clean_seq, pred_adv_seq = [], [], [], []
 
@@ -123,6 +140,12 @@ def main():
         for k, cv, av in zip(keys, cm, am):
             clean_sum[k] += cv
             adv_sum[k] += av
+
+        if args.per_sample:
+            seq = seqs[n] if n < len(seqs) else ""
+            fname = names[n] if n < len(names) else ""
+            per_sample.append([n, seq, fname, cm[0], cm[1], cm[2], am[0], am[1], am[2]])
+
         n += 1
 
         if args.visualize:
@@ -162,6 +185,36 @@ def main():
         w.writerow(["n_samples", n, n, 0])
         w.writerow(["max_count_drift", max_count_drift, max_count_drift, 0])
     print(f"\nMetrics written to {csv_path}")
+
+    # ---- Per-sample + per-sequence CSVs -----------------------------------
+    if args.per_sample:
+        ps_cols = ["index", "sequence", "filename",
+                   "clean_EPE", "clean_angular_deg", "clean_one_minus_cos",
+                   "adv_EPE", "adv_angular_deg", "adv_one_minus_cos"]
+        ps_path = os.path.join(args.outdir, f"per_sample_{args.attack}.csv")
+        with open(ps_path, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(ps_cols)
+            w.writerows(per_sample)
+        print(f"Per-sample metrics ({len(per_sample)} rows) written to {ps_path}")
+
+        # Group by sequence in first-appearance order; mean each metric, plus clean->adv delta.
+        groups = OrderedDict()
+        for row in per_sample:
+            groups.setdefault(row[1], []).append(row)
+        seq_path = os.path.join(args.outdir, f"per_sequence_{args.attack}.csv")
+        with open(seq_path, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["sequence", "n_samples",
+                        "clean_EPE", "clean_angular_deg", "clean_one_minus_cos",
+                        "adv_EPE", "adv_angular_deg", "adv_one_minus_cos",
+                        "delta_EPE", "delta_angular_deg", "delta_one_minus_cos"])
+            for seq, rows in groups.items():
+                cnt = len(rows)
+                ce, ca, cc, ae, aa, ac = (sum(r[c] for r in rows) / cnt for c in range(3, 9))
+                w.writerow([seq, cnt, ce, ca, cc, ae, aa, ac,
+                            ae - ce, aa - ca, ac - cc])
+        print(f"Per-sequence summary ({len(groups)} sequences) written to {seq_path}")
 
     # ---- Optional videos --------------------------------------------------
     if args.visualize:
