@@ -7,8 +7,10 @@ data/dataset/train_optical_flow
 datasets/
 venv/
 .venv/
-results/**
+results/*
 lib/
 lib64
+
+!results/valid-set-eval/
 
 *.pyc
