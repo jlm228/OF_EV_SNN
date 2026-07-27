@@ -1,0 +1,28 @@
++--------------------------------------------------------------------------+
+| Job on the BlueBEAR cluster:
+| Starting at Mon Jul 27 14:56:18 2026 for jlm228(840536)
+| Identity jobid 48685489 jobname of_ev_snn_eval
+| Running against project arnaboll-ai-research and in partition icelake-gpua100_80-shared
+| Requested cpu=4,mem=32G,node=1,billing=4,gres/gpu=1 - 02:00:00 walltime
+| Allocated cpu=4,mem=32G,node=1,billing=4,gres/gpu=1
+| Assigned to nodes bear-pg0102u04a
+| Command /rds/projects/a/arnaboll-ai-research/projects/SNN_optical_flow/OF_EV_SNN/hpc/evaluate.slurm
+| WorkDir /rds/projects/a/arnaboll-ai-research/projects/SNN_optical_flow/OF_EV_SNN
++--------------------------------------------------------------------------+
++--------------------------------------------------------------------------+
+| Finished at Mon Jul 27 15:07:11 2026 for jlm228(840536) on the BlueBEAR Cluster
+| Required (06:20.304 cputime, 1214073K memory used) - 00:10:53 walltime
+| JobState COMPLETING - Reason None
+| Exitcode 0:0
++--------------------------------------------------------------------------+
+Job efficiency stats from seff for Job ID: 48685489
+Cluster: paddington
+User/Group: jlm228/users
+State: COMPLETED (exit code 0)
+Nodes: 1
+Cores per node: 4
+CPU Utilized: 00:06:20
+CPU Efficiency: 14.55% of 00:43:32 core-walltime
+Job Wall-clock time: 00:10:53
+Memory Utilized: 1.16 GB
+Memory Efficiency: 3.62% of 32.00 GB (32.00 GB/node)

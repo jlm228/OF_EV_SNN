@@ -1,0 +1,29 @@
++--------------------------------------------------------------------------+
+| Job on the BlueBEAR cluster:
+| Starting at Mon Jul 27 12:31:54 2026 for jlm228(840536)
+| Identity jobid 48668677 jobname of_ev_snn_prep
+| Array Identity 48668675_2
+| Running against project arnaboll-ai-research and in partition emerald-shared
+| Requested cpu=1,mem=16G,node=1,billing=1 - 06:00:00 walltime
+| Allocated cpu=1,mem=16G,node=1,billing=1
+| Assigned to nodes bear-pg0201u11b
+| Command /rds/projects/a/arnaboll-ai-research/projects/SNN_optical_flow/OF_EV_SNN/hpc/preprocess.slurm
+| WorkDir /rds/projects/a/arnaboll-ai-research/projects/SNN_optical_flow/OF_EV_SNN
++--------------------------------------------------------------------------+
++--------------------------------------------------------------------------+
+| Finished at Mon Jul 27 12:42:43 2026 for jlm228(840536) on the BlueBEAR Cluster
+| Required (09:42.011 cputime, 751955K memory used) - 00:14:10 walltime
+| JobState COMPLETING - Reason None
+| Exitcode 0:0
++--------------------------------------------------------------------------+
+Job efficiency stats from seff for Job ID: 48668677
+Array Job ID: 48668675_2
+Cluster: paddington
+User/Group: jlm228/users
+State: COMPLETED (exit code 0)
+Cores: 1
+CPU Utilized: 00:09:42
+CPU Efficiency: 68.47% of 00:14:10 core-walltime
+Job Wall-clock time: 00:14:10
+Memory Utilized: 734.33 MB
+Memory Efficiency: 4.48% of 16.00 GB (16.00 GB/node)
