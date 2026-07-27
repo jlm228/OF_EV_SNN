@@ -4,5 +4,11 @@ data/dataset/saved_flow_data/gt_tensors
 data/dataset/saved_flow_data/mask_tensors
 data/dataset/train
 data/dataset/train_optical_flow
+datasets/
+venv/
+.venv/
+results/**
+lib/
+lib64
 
 *.pyc
