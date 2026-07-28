@@ -29,7 +29,7 @@ class PGDAttack(EventThreat):
         Number of PGD steps.
     rand_init : bool
         If True, start from a uniform random point inside the epsilon-ball
-        (standard PGD with random restart) instead of the clean chunk.
+        (standard PGD with random restart) instead of the clean E.
     loss : {"epe", "angular", "cosine"}
         Objective to maximise (default: EPE).
     clip_min : float
@@ -54,8 +54,8 @@ class PGDAttack(EventThreat):
         self.loss_name = loss
         self.clip_min = float(clip_min)
 
-    def perturb(self, chunk, *, model=None, label=None, mask=None):
-        """Pertubations applied to the model input ``chunk`` - an event-count
+    def perturb(self, E, *, model=None, label=None, M=None):
+        """Pertubations applied to the model input ``E`` - an event-count
         tensor of shape [B, C, T, H, W]. The pertubation is computed in the 
         same way as FGSM, but instead, iteratively take the sign of the input
         gradient and step in that direction, then project back into the L-infinity
@@ -63,28 +63,28 @@ class PGDAttack(EventThreat):
 
         if model is None or label is None:
             raise ValueError("PGDAttack requires `model` and `label`.")
-        if mask is None:
-            mask = torch.ones_like(label[:, :1])
+        if M is None:
+            M = torch.ones_like(label[:, :1])
 
         loss_fn = _loss_fn(self.loss_name)
         self.history = []
-        x0 = chunk.detach()
+        E = E.detach()
 
         if self.rand_init:
-            noise = (torch.rand_like(x0) * 2 - 1) * self.epsilon
-            x = (x0 + noise).clamp_(min=self.clip_min)
+            noise = (torch.rand_like(E) * 2 - 1) * self.epsilon
+            E_adv = (E + noise).clamp_(min=self.clip_min)
         else:
-            x = x0.clone()
+            E_adv = E.clone()
 
         with _FreezeParams(model):
             for _ in range(self.iters):
-                grad, loss_val = _input_grad(model, x, label, mask, loss_fn)
+                grad, loss_val = _input_grad(model, E_adv, label, M, loss_fn)
                 self._record(loss_val, grad.abs().max().item())
-                x = x.detach() + self.alpha * grad.sign()
-                x = torch.max(torch.min(x, x0 + self.epsilon), x0 - self.epsilon)
-                x = x.clamp_(min=self.clip_min)
+                E_adv = E_adv.detach() + self.alpha * grad.sign()
+                E_adv = torch.max(torch.min(E_adv, E + self.epsilon), E - self.epsilon)
+                E_adv = E_adv.clamp_(min=self.clip_min)
 
-        return x.detach()
+        return E_adv.detach()
 
-    def verify_constraint(self, chunk, adv):
-        return _epsilon_ball_report(chunk, adv, self.epsilon, self.clip_min)
+    def verify_constraint(self, E, E_adv):
+        return _epsilon_ball_report(E, E_adv, self.epsilon, self.clip_min)

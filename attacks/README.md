@@ -23,10 +23,10 @@ attacks/
 A **threat** subclasses `EventThreat` and implements `perturb(...)`, which takes
 the model-input event tensor and returns an adversarial copy of the same shape.
 
-- **Tensor layout:** `chunk` has shape `[B, C, T, H, W]` — this is the tensor
-  *after* the `torch.transpose(chunk, 1, 2)` that the eval/train loops perform, so
+- **Tensor layout:** `E` has shape `[B, C, T, H, W]` — this is the tensor
+  *after* the `torch.transpose(E, 1, 2)` that the eval/train loops perform, so
   the **time axis is dim 2**, `C = 2` (ON/OFF polarity), `T = 21` bins.
-- **Black-box vs white-box:** `perturb` receives optional `model`, `label`, `mask`.
+- **Black-box vs white-box:** `perturb` receives optional `model`, `label`, `M`.
   Model-agnostic threats ignore them; optimisation-based threats use them.
 
 ## Built-in threats
@@ -45,7 +45,7 @@ the model-input event tensor and returns an adversarial copy of the same shape.
 from attacks import build_attack
 
 attack = build_attack("retiming_blackbox", budget=2, granularity="pixel")
-adv_chunk = attack(chunk, model=net, label=label, mask=mask)
+E_adv = attack(E, model=net, label=label, M=M)
 ```
 
 Or from the command line via the evaluation harness:
@@ -63,7 +63,7 @@ python evaluate_attack.py --attack retiming_blackbox --budget 2 --visualize
 2. Subclass `EventThreat` (import it via `from ..base import EventThreat,
    register_threat` if nested one level deep) and decorate with
    `@register_threat("my_threat")`.
-3. Implement `perturb(self, chunk, *, model=None, label=None, mask=None)` and
+3. Implement `perturb(self, E, *, model=None, label=None, M=None)` and
    return a perturbed `[B, C, T, H, W]` tensor.
 4. Import the new subpackage/module in `attacks/__init__.py` so the
    registration runs (mirror the existing `retiming`/`fgsm_pgd` imports).
@@ -75,7 +75,7 @@ python evaluate_attack.py --attack retiming_blackbox --budget 2 --visualize
    `self._record(loss, grad_metric)` once per optimisation step -- record the
    *true* loss being maximised, not a sign-flipped/regularised objective. If
    it has a formal invariant (a budget, a preserved quantity, ...), override
-   `verify_constraint(self, chunk, adv) -> dict` and return at least
+   `verify_constraint(self, E, E_adv) -> dict` and return at least
    `{"passed": bool, "description": str}`. Neither is required.
 
 ```python
@@ -83,9 +83,9 @@ from attacks.base import EventThreat, register_threat
 
 @register_threat("event_injection")
 class EventInjection(EventThreat):
-    def perturb(self, chunk, *, model=None, label=None, mask=None):
+    def perturb(self, E, *, model=None, label=None, M=None):
         ...  # e.g. add spurious counts
-        return adv_chunk
+        return E_adv
 ```
 
 ## Reference

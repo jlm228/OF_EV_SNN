@@ -65,19 +65,19 @@ class _FreezeParams:
         return False
 
 
-def _input_grad(model, x: Tensor, label: Tensor, mask: Tensor, loss_fn) -> Tuple[Tensor, float]:
+def _input_grad(model, x: Tensor, label: Tensor, M: Tensor, loss_fn) -> Tuple[Tensor, float]:
     """One forward/backward pass; returns (grad w.r.t. x, loss value)."""
 
     x = x.detach().clone().requires_grad_(True)
-    functional.reset_net(model)
-    pred = model(x)[-1]
-    loss = loss_fn(pred, label, mask)
-    loss.backward()
+    functional.reset_net(model) # reset all neurons' states to zero before the forward pass
+    pred = model(x)[-1] # forward pass
+    loss = loss_fn(pred, label, M) # compute loss (for loss_fn chosen)
+    loss.backward() # backward pass to compute gradients w.r.t. x
     grad = x.grad.detach()
     return grad, loss.item()
 
 
-def _epsilon_ball_report(chunk: Tensor, adv: Tensor, epsilon: float, clip_min: float,
+def _epsilon_ball_report(E: Tensor, E_adv: Tensor, epsilon: float, clip_min: float,
                          tol: float = 1e-3) -> dict:
     """Shared `verify_constraint` body for FGSMAttack and PGDAttack.
 
@@ -85,8 +85,8 @@ def _epsilon_ball_report(chunk: Tensor, adv: Tensor, epsilon: float, clip_min: f
     clean input and that event counts remain non-negative.
     """
 
-    max_abs_delta = (adv - chunk).abs().max().item()
-    min_value = adv.min().item()
+    max_abs_delta = (E_adv - E).abs().max().item()
+    min_value = E_adv.min().item()
     passed = (max_abs_delta <= epsilon + tol) and (min_value >= clip_min - tol)
     return {
         "passed": passed,

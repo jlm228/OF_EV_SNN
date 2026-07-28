@@ -1,6 +1,6 @@
 """Modular threat framework for an event-based optical flow SNN.
 
-A threat pertubs the model's input event tensor ``chunk`` of shape ``[B, C, T, H, W]``.
+A threat pertubs the model's input event tensor ``E`` of shape ``[B, C, T, H, W]``.
 Where:
 - ``B`` is the batch size,
 - ``C`` is the number of channels (2 for ON/OFF polarity),
@@ -60,27 +60,27 @@ class EventThreat(ABC):
     @abstractmethod
     def perturb(
         self,
-        chunk: Tensor,
+        E: Tensor,
         *,
         model=None,
         label: Optional[Tensor] = None,
-        mask: Optional[Tensor] = None,
+        M: Optional[Tensor] = None,
     ) -> Tensor:
-        """Return an adversarial copy of ``chunk`` (same shape/layout).
+        """Return an adversarial copy of ``E`` (same shape/layout).
 
         Parameters
         ----------
-        chunk : Tensor
+        E : Tensor
             Event counts, shape ``[B, C, T, H, W]`` (time = dim 2).
         model : nn.Module, optional
             Only needed by white-box / model-aware threats.
-        label, mask : Tensor, optional
-            Ground-truth flow ``[B, 2, H, W]`` and validity mask; needed by
+        label, M : Tensor, optional
+            Ground-truth flow ``[B, 2, H, W]`` and validity mask ``M``; needed by
             optimisation-based threats.
         """
 
-    def verify_constraint(self, chunk: Tensor, adv: Tensor) -> dict:
-        """Self-report whether ``adv`` respects this threat's own invariant.
+    def verify_constraint(self, E: Tensor, E_adv: Tensor) -> dict:
+        """Self-report whether ``E_adv`` respects this threat's own invariant.
 
         Default: no invariant, returns ``{}``. Threats with a formal constraint
         (e.g. an L-infinity budget) should override this to return at least
@@ -100,8 +100,8 @@ class EventThreat(ABC):
             self.history.append((loss, grad_metric))
 
     # Callable so a threat can be dropped into a pipeline like a transform.
-    def __call__(self, chunk, *, model=None, label=None, mask=None) -> Tensor:
-        return self.perturb(chunk, model=model, label=label, mask=mask)
+    def __call__(self, E, *, model=None, label=None, M=None) -> Tensor:
+        return self.perturb(E, model=model, label=label, M=M)
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}({self.config})"
@@ -113,8 +113,8 @@ class IdentityThreat(EventThreat):
 
     name = "identity"
 
-    def perturb(self, chunk, *, model=None, label=None, mask=None):
-        return chunk
+    def perturb(self, E, *, model=None, label=None, M=None):
+        return E
 
 
 def build_attack(name: Optional[str], **cfg) -> EventThreat:

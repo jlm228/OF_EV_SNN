@@ -39,29 +39,29 @@ class FGSMAttack(EventThreat):
                          record_history=record_history, **kw)
         self.epsilon = float(epsilon)
         self.loss_name = loss
-        self.clip_min = float(clip_min)
+        self.clip_min = float(clip_min) 
 
-    def perturb(self, chunk, *, model=None, label=None, mask=None):
-        """Pertubations applied to the model input ``chunk`` - an event-count
+    def perturb(self, E, *, model=None, label=None, M=None):
+        """Pertubations applied to the model input ``E`` - an event-count
         tensor of shape [B, C, T, H, W]. The perturbation is computed by taking
         the sign of the input gradient and stepping in that direction, then
         clamping to ``clip_min`` so event counts stay non-negative."""
 
         if model is None or label is None:
             raise ValueError("FGSMAttack requires `model` and `label`.")
-        if mask is None:
-            mask = torch.ones_like(label[:, :1])
+        if M is None:
+            M = torch.ones_like(label[:, :1])
 
         loss_fn = _loss_fn(self.loss_name)
         self.history = []
 
         with _FreezeParams(model):
-            grad, loss_val = _input_grad(model, chunk, label, mask, loss_fn)
+            grad, loss_val = _input_grad(model, E, label, M, loss_fn)
             self._record(loss_val, grad.abs().max().item())
-            adv = chunk.detach() + self.epsilon * grad.sign()
-            adv = adv.clamp_(min=self.clip_min)
+            E_adv = E.detach() + self.epsilon * grad.sign()
+            E_adv = E_adv.clamp_(min=self.clip_min) # clamp between 0 and infinity to keep event counts non-negative
 
-        return adv.detach()
+        return E_adv.detach()
 
-    def verify_constraint(self, chunk, adv):
-        return _epsilon_ball_report(chunk, adv, self.epsilon, self.clip_min)
+    def verify_constraint(self, E, E_adv):
+        return _epsilon_ball_report(E, E_adv, self.epsilon, self.clip_min)

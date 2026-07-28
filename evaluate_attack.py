@@ -67,7 +67,7 @@ def load_sample_names(args):
     """Ordered (sequence, filename) for each loader sample, from the split CSV.
 
     ``DSECDatasetLite`` iterates the split rows in order (``shuffle=False``) and takes each
-    sample's label/mask from the *second* file in the row, so that column is the canonical
+    sample's label/M from the *second* file in the row, so that column is the canonical
     per-sample identity. Reconstructing here avoids changing the dataset's return signature.
     """
     split_path = os.path.join(args.root, "sequence_lists", args.split)
@@ -78,17 +78,17 @@ def load_sample_names(args):
 
 
 @torch.no_grad()
-def predict(net, chunk):
+def predict(net, E):
     """Reset state and return the finest flow field pred_1, shape [B, 2, H, W]."""
     functional.reset_net(net)
-    return net(chunk)[-1]
+    return net(E)[-1]
 
 
-def metrics(pred, label, mask):
+def metrics(pred, label, M):
     return (
-        mod_loss_function(pred, label, mask).item(),               # magnitude / EPE proxy
-        angular_loss_function(pred, label, mask).item() * RAD2DEG,  # angular error (deg)
-        cosine_loss_function(pred, label, mask).item(),            # 1 - cos(pred, label)
+        mod_loss_function(pred, label, M).item(),               # magnitude / EPE proxy
+        angular_loss_function(pred, label, M).item() * RAD2DEG,  # angular error (deg)
+        cosine_loss_function(pred, label, M).item(),            # 1 - cos(pred, label)
     )
 
 
@@ -119,24 +119,24 @@ def main():
     # Sequences for optional visualisation.
     label_seq, mask_seq, pred_clean_seq, pred_adv_seq = [], [], [], []
 
-    for chunk, mask, label in tqdm(loader, desc="Evaluating"):
-        chunk = torch.transpose(chunk, 1, 2)              # [B, C, T, H, W]
-        mask = torch.unsqueeze(mask, dim=1)               # [B, 1, H, W]
-        chunk = chunk.to(device=device, dtype=torch.float32)
+    for E, M, label in tqdm(loader, desc="Evaluating"):
+        E = torch.transpose(E, 1, 2)              # [B, C, T, H, W]
+        M = torch.unsqueeze(M, dim=1)               # [B, 1, H, W] (pixels with valid GT flow)
+        E = E.to(device=device, dtype=torch.float32)
         label = label.to(device=device, dtype=torch.float32)  # [B, 2, H, W]
-        mask = mask.to(device=device)
+        M = M.to(device=device)
 
         # Clean prediction.
-        pred_clean = predict(net, chunk)
+        pred_clean = predict(net, E)
 
         # Adversarial event tensor + prediction.
-        adv = threat(chunk, model=net, label=label, mask=mask)
+        E_adv = threat(E, model=net, label=label, M=M)
         max_count_drift = max(max_count_drift,
-                              (adv.sum() - chunk.sum()).abs().item())
-        pred_adv = predict(net, adv)
+                              (E_adv.sum() - E.sum()).abs().item())
+        pred_adv = predict(net, E_adv)
 
-        cm = metrics(pred_clean, label, mask)
-        am = metrics(pred_adv, label, mask)
+        cm = metrics(pred_clean, label, M)
+        am = metrics(pred_adv, label, M)
         for k, cv, av in zip(keys, cm, am):
             clean_sum[k] += cv
             adv_sum[k] += av
@@ -152,7 +152,7 @@ def main():
             label_seq.append(torch.squeeze(label[0]).cpu().numpy())
             pred_clean_seq.append(torch.squeeze(pred_clean[0]).cpu().numpy())
             pred_adv_seq.append(torch.squeeze(pred_adv[0]).cpu().numpy())
-            mask_seq.append(torch.squeeze(mask[0]).cpu().numpy())
+            mask_seq.append(torch.squeeze(M[0]).cpu().numpy())
 
         if args.max_chunks is not None and n >= args.max_chunks:
             break
@@ -165,7 +165,7 @@ def main():
 
     # ---- Report -----------------------------------------------------------
     print(f"\nEvaluated {n} samples | attack = '{args.attack}'")
-    print(f"Count drift: max |sum(adv) - sum(clean)| = {max_count_drift:.6g} "
+    print(f"Count drift: max |sum(E_adv) - sum(clean)| = {max_count_drift:.6g} "
           f"(0 = perfectly rate-preserving; retiming_* attacks should be ~0, "
           f"a large value is *expected* for additive attacks like fgsm/pgd)\n")
     header = f"{'metric':<16}{'clean':>12}{'attacked':>12}{'delta':>12}"
@@ -198,7 +198,7 @@ def main():
             w.writerows(per_sample)
         print(f"Per-sample metrics ({len(per_sample)} rows) written to {ps_path}")
 
-        # Group by sequence in first-appearance order; mean each metric, plus clean->adv delta.
+        # Group by sequence in first-appearance order; mean each metric, plus clean->E_adv delta.
         groups = OrderedDict()
         for row in per_sample:
             groups.setdefault(row[1], []).append(row)

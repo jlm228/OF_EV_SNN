@@ -35,8 +35,8 @@ counts = np.zeros(64, dtype=np.int64)          # histogram of occupied voxel cou
 
 # Scan the dataset and update histogram and counters
 for idx in indices:
-    chunk, _, _ = dataset[int(idx)]
-    arr = torch.as_tensor(chunk).float().numpy()     # [T, 2, H, W]
+    E, _, _ = dataset[int(idx)]
+    arr = torch.as_tensor(E).float().numpy()     # [T, 2, H, W]
 
     n_voxels = arr.size
     sum_of_event_counts += arr.sum()

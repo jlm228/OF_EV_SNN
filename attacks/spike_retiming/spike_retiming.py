@@ -42,7 +42,7 @@ from ..base import EventThreat, register_threat
 # Core retiming primitives (both are count-preserving = rate-preserving)
 # ---------------------------------------------------------------------------
 
-def retime_counts(chunk: Tensor, delta_map: Tensor) -> Tensor:
+def retime_counts(E: Tensor, delta_map: Tensor) -> Tensor:
     """Shift event counts along time by a per-pixel integer schedule.
 
     ``delta_map`` has shape ``[B, C, H, W]`` (integer bins; positive = later in
@@ -52,15 +52,15 @@ def retime_counts(chunk: Tensor, delta_map: Tensor) -> Tensor:
     Implemented as a scatter-add along the time axis, which supports an arbitrary
     (per-pixel, per-polarity) shift in a single vectorised op.
     """
-    B, C, T, H, W = chunk.shape
-    t_idx = torch.arange(T, device=chunk.device).view(1, 1, T, 1, 1)
+    B, C, T, H, W = E.shape
+    t_idx = torch.arange(T, device=E.device).view(1, 1, T, 1, 1)
     dest = (t_idx + delta_map.long().unsqueeze(2)).clamp_(0, T - 1)  # [B,C,T,H,W]
-    out = torch.zeros_like(chunk)
-    out.scatter_add_(2, dest, chunk)
+    out = torch.zeros_like(E)
+    out.scatter_add_(2, dest, E)
     return out
 
 
-def global_soft_shift(chunk: Tensor, delta: int, preserve_counts: bool = True) -> Tensor:
+def global_soft_shift(E: Tensor, delta: int, preserve_counts: bool = True) -> Tensor:
     """Differentiable rigid temporal shift of the whole tensor by ``delta`` bins.
 
     Positive ``delta`` shifts events later in time.  Overflowing counts are
@@ -69,17 +69,17 @@ def global_soft_shift(chunk: Tensor, delta: int, preserve_counts: bool = True) -
     retiming used by the white-box attack.
     """
     if delta == 0:
-        return chunk
+        return E
 
-    T = chunk.shape[2]
+    T = E.shape[2]
     if abs(delta) >= T:
-        summed = chunk.sum(dim=2, keepdim=True)
-        out = torch.zeros_like(chunk)
+        summed = E.sum(dim=2, keepdim=True)
+        out = torch.zeros_like(E)
         out[:, :, -1:] = summed if delta > 0 else out[:, :, -1:]
         out[:, :, :1] = summed if delta < 0 else out[:, :, :1]
         return out
 
-    rolled = torch.roll(chunk, shifts=delta, dims=2)
+    rolled = torch.roll(E, shifts=delta, dims=2)
     out = rolled.clone()
     if delta > 0:
         overflow = rolled[:, :, :delta].sum(dim=2, keepdim=True)
@@ -165,35 +165,35 @@ class BlackBoxRetiming(EventThreat):
         if seed is not None:
             self._gen.manual_seed(int(seed))
 
-    def _sample_delta_map(self, chunk: Tensor) -> Tensor:
-        B, C, T, H, W = chunk.shape
+    def _sample_delta_map(self, E: Tensor) -> Tensor:
+        B, C, T, H, W = E.shape
         D = self.budget
         gh, gw = _grid_shape(H, W, self.granularity, self.block_size)
         n_chan = C if self.per_polarity else 1
-        # Sample on CPU (Generator is CPU-bound) then move to the chunk's device.
+        # Sample on CPU (Generator is CPU-bound) then move to the E's device.
         raw = torch.randint(-D, D + 1, (B, n_chan, gh, gw), generator=self._gen)
         if n_chan == 1 and C > 1:
             raw = raw.expand(B, C, gh, gw)
-        raw = raw.to(chunk.device).contiguous()
+        raw = raw.to(E.device).contiguous()
         delta_map = _upsample_grid(raw, H, W, self.granularity, self.block_size)
         return delta_map.contiguous()
 
-    def perturb(self, chunk, *, model=None, label=None, mask=None):
+    def perturb(self, E, *, model=None, label=None, M=None):
         if self.mode == "random":
-            return retime_counts(chunk, self._sample_delta_map(chunk))
+            return retime_counts(E, self._sample_delta_map(E))
 
         if self.mode == "worst_of_n":
             if model is None or label is None:
                 raise ValueError("mode='worst_of_n' requires `model` and `label`.")
-            if mask is None:
-                mask = torch.ones_like(label[:, :1])
-            best_adv, best_loss = chunk, -float("inf")
+            if M is None:
+                M = torch.ones_like(label[:, :1])
+            best_adv, best_loss = E, -float("inf")
             for _ in range(self.n_samples):
-                adv = retime_counts(chunk, self._sample_delta_map(chunk))
+                adv = retime_counts(E, self._sample_delta_map(E))
                 functional.reset_net(model)
                 with torch.no_grad():
                     pred = model(adv)[-1]
-                loss = angular_loss_function(pred, label, mask).item()
+                loss = angular_loss_function(pred, label, M).item()
                 if loss > best_loss:
                     best_adv, best_loss = adv, loss
             return best_adv
@@ -252,13 +252,13 @@ class PILRetimingAttack(EventThreat):
     def _loss_fn(self):
         return angular_loss_function if self.loss_name == "angular" else cosine_loss_function
 
-    def perturb(self, chunk, *, model=None, label=None, mask=None):
+    def perturb(self, E, *, model=None, label=None, M=None):
         if model is None or label is None:
             raise ValueError("PILRetimingAttack requires `model` and `label`.")
-        if mask is None:
-            mask = torch.ones_like(label[:, :1])
+        if M is None:
+            M = torch.ones_like(label[:, :1])
 
-        B, C, T, H, W = chunk.shape
+        B, C, T, H, W = E.shape
         D = self.budget
         deltas: List[int] = list(range(-D, D + 1))
         K = len(deltas)
@@ -270,13 +270,13 @@ class PILRetimingAttack(EventThreat):
 
         # Candidate rigid shifts are constants w.r.t. the optimisation.
         with torch.no_grad():
-            shifted = torch.stack([global_soft_shift(chunk, d) for d in deltas], dim=0)
-        abs_delta = torch.tensor([abs(d) for d in deltas], dtype=chunk.dtype,
-                                 device=chunk.device).view(K, 1, 1, 1, 1)
+            shifted = torch.stack([global_soft_shift(E, d) for d in deltas], dim=0)
+        abs_delta = torch.tensor([abs(d) for d in deltas], dtype=E.dtype,
+                                 device=E.device).view(K, 1, 1, 1, 1)
 
         gh, gw = _grid_shape(H, W, self.granularity, self.block_size)
         n_chan = C if self.per_polarity else 1
-        logits = torch.zeros(K, B, n_chan, gh, gw, device=chunk.device, requires_grad=True)
+        logits = torch.zeros(K, B, n_chan, gh, gw, device=E.device, requires_grad=True)
         optimizer = torch.optim.Adam([logits], lr=self.lr)
 
         def probs_upsampled(raw_logits):
@@ -291,7 +291,7 @@ class PILRetimingAttack(EventThreat):
             p_up = probs_upsampled(logits)                    # [K,B,C,H,W]
             soft = (p_up.unsqueeze(3) * shifted).sum(dim=0)   # [B,C,T,H,W]
             pred = model(soft)[-1]
-            loss = loss_fn(pred, label, mask)
+            loss = loss_fn(pred, label, M)
             objective = -loss
             if self.budget_weight > 0:
                 objective = objective + self.budget_weight * (p_up * abs_delta).sum(0).mean()
@@ -301,12 +301,12 @@ class PILRetimingAttack(EventThreat):
         # Hard projection: arg-max shift per (channel, block) -> discrete schedule.
         with torch.no_grad():
             idx = torch.softmax(logits, dim=0).argmax(dim=0)  # [B,n_chan,gh,gw]
-            delta_vals = torch.tensor(deltas, device=chunk.device)[idx]
+            delta_vals = torch.tensor(deltas, device=E.device)[idx]
             if n_chan == 1 and C > 1:
                 delta_vals = delta_vals.expand(B, C, gh, gw)
             delta_map = _upsample_grid(delta_vals.contiguous(), H, W,
                                        self.granularity, self.block_size)
-            adv = retime_counts(chunk, delta_map.contiguous())
+            adv = retime_counts(E, delta_map.contiguous())
         return adv.detach()
 
 
@@ -317,21 +317,21 @@ class PILRetimingAttack(EventThreat):
 def _self_test():
     torch.manual_seed(0)
     B, C, T, H, W = 2, 2, 21, 16, 20
-    chunk = torch.randint(0, 4, (B, C, T, H, W)).float()
+    E = torch.randint(0, 4, (B, C, T, H, W)).float()
 
     for gran in ("global", "block", "pixel"):
         atk = BlackBoxRetiming(budget=3, granularity=gran, block_size=8, seed=1)
-        adv = atk.perturb(chunk)
-        assert adv.shape == chunk.shape, (gran, adv.shape)
+        adv = atk.perturb(E)
+        assert adv.shape == E.shape, (gran, adv.shape)
         # Rate preservation: per-pixel total count over time is unchanged.
-        assert torch.allclose(adv.sum(dim=2), chunk.sum(dim=2)), \
+        assert torch.allclose(adv.sum(dim=2), E.sum(dim=2)), \
             f"count not preserved for granularity={gran}"
         # And it actually moved something (with very high probability).
-        assert not torch.allclose(adv, chunk), f"no perturbation for granularity={gran}"
+        assert not torch.allclose(adv, E), f"no perturbation for granularity={gran}"
 
     # Global rigid soft-shift is also count-preserving.
     for d in (-2, 0, 3):
-        assert torch.allclose(global_soft_shift(chunk, d).sum(dim=2), chunk.sum(dim=2))
+        assert torch.allclose(global_soft_shift(E, d).sum(dim=2), E.sum(dim=2))
 
     print("attacks.spike_retiming self-test passed "
           "(shape + rate-preservation verified for all granularities).")
