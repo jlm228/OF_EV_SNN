@@ -1,120 +1,72 @@
-"""Calibrate an L-infinity epsilon budget for the fgsm/pgd threats, for the DSEC dataset.
+"""Pick an epsilon range for FGSM on DSEC event tensors.
 
-FGSM/PGD in this repo perturb raw event counts directly. Therefore, the
-'eps/255' convention from the original image-based attacks cannot apply here.
+As event tensors are used, one unit of epsilon means:
+'add one event to every pixel, in every polarity channel, in every time bin'.
 
-This script scans a sample of the training data's event-count tensors,
-computing per-polarity-channel statistics of the nonzero bin counts, and saves
-a suggested epsilon table expressed as small multiples of the mean nonzero count.
+This is a very large pertubation for sparse data, so the epsilon range in this case
+is orders of magnitude smaller than the typical FGSM range for image recognition tasks.
 
-Usage::
+Run once. Copy the printed epsilon values into the attack sweep.
 
-    python -m attacks.fgsm_pgd.calibrate_epsilon --n-samples 200
-
-Output is written to ``results/epsilon_calibration.json``.
+Use:
+    python calibrate_epsilon.py
 """
-
-import argparse
-import json
-import os
 
 import numpy as np
 import torch
 
 from data.dsec_dataset_lite_stereo_21x9 import DSECDatasetLite
 
+ROOT = "data/dataset/saved_flow_data"
+SPLIT = "train_split_doubleseq.csv" # use training split to calibrate epsilon
+N_SAMPLES = 200 # num. of samples to randomly take from the dataset
+MASS_FRACTIONS = [0.005, 0.01, 0.02, 0.05, 0.10, 0.25] # target percentages of clean events to inject as noise
 
-def parse_args():
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--root", default="data/dataset/saved_flow_data")
-    p.add_argument("--split", default="train_split_doubleseq.csv")
-    p.add_argument("--num-frames-per-ts", type=int, default=11)
-    p.add_argument("--n-samples", type=int, default=200,
-                   help="Number of chunks to scan (a subset, chosen with --seed).")
-    p.add_argument("--seed", type=int, default=2305)
-    p.add_argument("--multipliers", type=float, nargs="+", default=[0.5, 1.0, 2.0, 4.0],
-                   help="Suggested epsilon = multiplier * mean_nonzero_count.")
-    p.add_argument("--outdir", default="results")
-    return p.parse_args()
+# Load dataset and pick samples
+dataset = DSECDatasetLite(root=ROOT, file_list=SPLIT, num_frames_per_ts=11,
+                          stereo=False, transform=None)
 
+rng = np.random.default_rng(999) # keep seed the same for reproducibility
+indices = rng.choice(len(dataset), size=min(N_SAMPLES, len(dataset)), replace=False)
 
-def main():
-    args = parse_args()
-    os.makedirs(args.outdir, exist_ok=True)
+# Initialise counters
+n_voxels, sum_of_event_counts, count_of_nonzero_voxels = 0, 0.0, 0
+counts = np.zeros(64, dtype=np.int64)          # histogram of occupied voxel counts
 
-    dataset = DSECDatasetLite(root=args.root, file_list=args.split,
-                              num_frames_per_ts=args.num_frames_per_ts,
-                              stereo=False, transform=None)
+# Scan the dataset and update histogram and counters
+for idx in indices:
+    chunk, _, _ = dataset[int(idx)]
+    arr = torch.as_tensor(chunk).float().numpy()     # [T, 2, H, W]
 
-    rng = np.random.default_rng(args.seed)
-    n = min(args.n_samples, len(dataset))
-    indices = rng.choice(len(dataset), size=n, replace=False)
+    n_voxels = arr.size
+    sum_of_event_counts += arr.sum()
+    count_of_nonzero_voxels += (arr > 0).sum()
 
-    on_counts = []
-    off_counts = []
-    all_counts = []
+    occupied = np.rint(arr[arr > 0]).astype(int)
+    counts += np.bincount(np.clip(occupied, 0, 63), minlength=64)
 
-    for idx in indices:
-        chunk, _mask, _label = dataset[int(idx)]
-        chunk = torch.as_tensor(chunk).float()  # [T, C=2, H, W]
-        on = chunk[:, 0]
-        off = chunk[:, 1]
-        on_nz = on[on > 0]
-        off_nz = off[off > 0]
-        if on_nz.numel() > 0:
-            on_counts.append(on_nz.numpy())
-        if off_nz.numel() > 0:
-            off_counts.append(off_nz.numpy())
-        both = chunk[chunk > 0]
-        if both.numel() > 0:
-            all_counts.append(both.numpy())
+# Compute statistics
+n = len(indices)
+avg_events_per_sample = sum_of_event_counts / n
+sparsity = count_of_nonzero_voxels / (n * n_voxels) # fraction of voxels occupied by at least one event
+frac_single = counts[1] / counts[1:].sum() # fraction of occupied voxels that hold exactly one event
 
-    def _stats(arrs):
-        if not arrs:
-            return {}
-        cat = np.concatenate(arrs)
-        return {
-            "mean": float(cat.mean()),
-            "std": float(cat.std()),
-            "p50": float(np.percentile(cat, 50)),
-            "p90": float(np.percentile(cat, 90)),
-            "p95": float(np.percentile(cat, 95)),
-            "p99": float(np.percentile(cat, 99)),
-            "max": float(cat.max()),
-        }
+# Print epsilon table and dataset statistics
+print(f"Scanned {n} chunks\n")
+print(f"  voxels per sample     {n_voxels:,}")
+print(f"  occupied              {sparsity * 100:.2f}%")
+print(f"  events per sample     {avg_events_per_sample:,.0f}")
+print(f"  occupied voxels = 1   {frac_single * 100:.1f}%")
+print(f"  largest count seen    {np.flatnonzero(counts).max()}\n")
 
-    stats = {
-        "on_polarity": _stats(on_counts),
-        "off_polarity": _stats(off_counts),
-        "combined": _stats(all_counts),
-    }
+# As FGSM's signed step pushes every voxel by +/- epsilon, any empty voxels that get a negative sign
+# will be clamped to 0 and add nothing. Only the +epsilon half survive.
+# Therefore, the attack injects roughly 0.5 * epsilon * n_voxels events.
+# This can be inverted to find the epsilon that injects a target fraction of clean events.
+print("  eps        injects   as % of clean events")
+for rho in MASS_FRACTIONS:
+    eps = rho * avg_events_per_sample / (0.5 * n_voxels)
+    print(f"  {eps:<9.5f} {rho * avg_events_per_sample:>9,.0f}   {rho * 100:>5.1f}%")
 
-    mean_nonzero = stats["combined"]["mean"]
-    suggested_epsilon = {f"{m}x_mean": round(m * mean_nonzero, 4) for m in args.multipliers}
-
-    result = {
-        "root": args.root,
-        "split": args.split,
-        "n_samples_scanned": n,
-        "count_statistics": stats,
-        "suggested_epsilon": suggested_epsilon,
-    }
-
-    out_path = os.path.join(args.outdir, "epsilon_calibration.json")
-    with open(out_path, "w") as f:
-        json.dump(result, f, indent=2)
-
-    print(f"Scanned {n} chunks from '{args.split}'.")
-    print(f"Nonzero event-count statistics (combined ON+OFF):")
-    for k, v in stats["combined"].items():
-        print(f"  {k:>6} = {v:.4f}")
-    print(f"\nSuggested epsilon values (multiples of mean nonzero count = "
-          f"{mean_nonzero:.4f}):")
-    for k, v in suggested_epsilon.items():
-        print(f"  {k:<12} epsilon = {v}")
-    print(f"\nWritten to {out_path}")
-
-
-if __name__ == "__main__":
-    main()
+print(f"\n  eps = 1.0 erases any occupied voxel holding 1 event "
+      f"({frac_single * 100:.0f}% of them)")
