@@ -15,6 +15,7 @@ attacks/
     calibrate_epsilon.py  script for picking an epsilon budgetm from the input data
     fgsm.py               FGSMAttack
     pdg.py                PDGAttack
+    random_sign.py        RandomSignAttack (magnitude-matched control for FGSM/PGD)
   compare_easy_hard.py   generic clean/attacked comparison across two conditions
 ```
 
@@ -38,6 +39,7 @@ the model-input event tensor and returns an adversarial copy of the same shape.
 | `retiming_pil`          | `PILRetimingAttack`   | `spike_retiming`  | white-box projected-in-the-loop optimisation |
 | `fgsm`                  | `FGSMAttack`          | `fgsm_pgd`  | white-box single-step L-infinity attack, maximises EPE |
 | `pgd`                   | `PGDAttack`           | `fgsm_pgd`  | white-box iterative, projected L-infinity attack |
+| `random_sign` / `control` | `RandomSignAttack`  | `fgsm_pgd`  | model-agnostic control: `E_rand = clamp(E + eps*S, 0, inf)`, `S ~ Uniform{-1,+1}` (same L-infinity magnitude as an FGSM step, no gradient) |
 
 ## Usage
 
@@ -52,6 +54,17 @@ Or from the command line via the evaluation harness:
 
 ```bash
 python evaluate_attack.py --attack retiming_blackbox --budget 2 --visualize
+```
+
+For the additive attacks, `sweep_epsilon.py` (repo root) runs the full FGSM/PGD
+experiment in one pass: a sweep over an epsilon range plus the magnitude-matched
+`random_sign` control, averaged over the validation split. The headline column
+`adv_minus_rand_EPE` is the gradient-sign advantage over a random sign of the
+same L-infinity magnitude.
+
+```bash
+python sweep_epsilon.py --attack fgsm \
+    --epsilons 0.0 0.002 0.005 0.01 0.02 0.05 --rand-restarts 5
 ```
 
 ## Adding a new threat

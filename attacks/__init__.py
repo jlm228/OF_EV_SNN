@@ -2,7 +2,7 @@ from .base import EventThreat, THREAT_REGISTRY, build_attack, register_threat
 
 # Import for the side effect of registering the threats in THREAT_REGISTRY.
 from .spike_retiming import BlackBoxRetiming, PILRetimingAttack
-from .fgsm_pgd import FGSMAttack, PGDAttack
+from .fgsm_pgd import FGSMAttack, PGDAttack, RandomSignAttack
 
 __all__ = [
     "EventThreat",
@@ -13,4 +13,5 @@ __all__ = [
     "PILRetimingAttack",
     "FGSMAttack",
     "PGDAttack",
+    "RandomSignAttack",
 ]
