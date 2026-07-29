@@ -1,20 +1,18 @@
 """Sweep an additive L-infinity attack over an epsilon range, with a control.
 
-Extends the single-point comparison in ``evaluate_attack.py`` to the full
-experiment described for FGSM/PGD:
+Extends the single-point comparison in ``evaluate_attack.py`` to the epsilon sweep
+step described for FGSM/PGD:
 
-* **Step 4 -- epsilon sweep.** Run the selected attack (``fgsm`` / ``pgd``) over
-  the DSEC validation split for each epsilon in a range, and report clean vs.
-  adversarial flow error as a curve (one row per epsilon).
-* **Step 5 -- random-sign control.** For each epsilon, also apply the
-  magnitude-matched control ``E_rand = clamp(E + epsilon * S, 0, inf)`` with
-  ``S ~ Uniform{-1, +1}``, averaged over ``R`` seeded draws per sample. This
-  isolates the value of the *gradient* sign from merely spending the epsilon
-  budget: the headline comparison is adversarial EPE vs. random-sign EPE at the
-  same epsilon.
+Run the selected attack (``fgsm`` / ``pgd``) over the DSEC validation split for each 
+epsilon in a range, and report clean vs. adversarial flow error as a curve (one row per epsilon).
 
 The clean prediction is epsilon-independent, so it is computed once per sample
 and shared across the whole sweep (single pass over the data).
+
+The attack objective is a third axis: ``--losses`` runs one experiment per error
+type (fgsm/pgd maximising EPE, angular, or cosine error), and *every* run is
+measured under *all* three metrics. Clean is computed once; the random-sign
+control is computed once per epsilon (it has no objective).
 
 Examples
 --------
@@ -22,6 +20,11 @@ FGSM sweep with a 5-draw random-sign control::
 
     python sweep_epsilon.py --attack fgsm \
         --epsilons 0.0 0.002 0.005 0.01 0.02 0.05 --rand-restarts 5
+
+One experiment per error type (EPE-, angular-, cosine-objective attacks)::
+
+    python sweep_epsilon.py --attack fgsm --losses epe angular cosine \
+        --epsilons 0.005 0.01 0.02
 
 PGD sweep (per-step size defaults to epsilon/4 unless --alpha is given)::
 
@@ -65,6 +68,11 @@ def parse_args():
     p.add_argument("--epsilons", type=float, nargs="+", default=None,
                    help="Epsilon sweep values (space-separated). "
                         "If omitted, falls back to the single --epsilon.")
+    p.add_argument("--losses", nargs="+", default=None,
+                   choices=["epe", "angular", "cosine"],
+                   help="Attack objective(s) to sweep -- one experiment per error "
+                        "type (fgsm/pgd only). Each is measured under ALL metrics. "
+                        "Default: the single --loss, else 'epe'.")
     p.add_argument("--rand-restarts", type=int, default=5,
                    help="R: random-sign control draws per sample per epsilon "
                         "(0 disables the control).")
@@ -89,16 +97,14 @@ def metrics(pred, label, M):
     )
 
 
-def build_attack_for_epsilon(args, eps):
-    """Build the selected attack at a specific epsilon, carrying the CLI config.
+def build_attack_for(args, eps, loss):
+    """Build the selected attack at a specific epsilon and objective.
 
-    Mirrors ``cli_common.build_threat_from_args`` but forces ``epsilon = eps``.
-    Extra keys (iters/alpha/rand_init/loss) are only injected when the user set
-    them, so each attack keeps its own defaults.
+    Mirrors ``cli_common.build_threat_from_args`` but forces ``epsilon = eps``
+    and ``loss`` (the objective being swept). ``alpha``/``rand_init`` are only
+    injected when the user set them, so PGD keeps its own defaults.
     """
-    cfg = dict(iters=args.iters, seed=args.seed, epsilon=eps)
-    if args.loss is not None:
-        cfg["loss"] = args.loss
+    cfg = dict(iters=args.iters, seed=args.seed, epsilon=eps, loss=loss)
     if args.alpha is not None:
         cfg["alpha"] = args.alpha
     if args.rand_init:
@@ -122,20 +128,26 @@ def main():
     print("Creating validation dataset ...")
     device, net, dataset, loader = load_model_and_data(args)
     print(f"Device: {device}")
-    print(f"Attack: {args.attack} | epsilons: {epsilons} | "
+    losses = (args.losses if args.losses is not None
+              else ([args.loss] if args.loss is not None else ["epe"]))
+    print(f"Attack: {args.attack} | objectives: {losses} | epsilons: {epsilons} | "
           f"random-sign control R = {R}")
 
-    # One attack object per epsilon; one shared, seeded control (epsilon set per use).
-    attacks = {eps: build_attack_for_epsilon(args, eps) for eps in epsilons}
+    # One attack object per (objective, epsilon); one shared seeded control
+    # (epsilon set per use; the control is objective-independent).
+    attacks = {(loss, eps): build_attack_for(args, eps, loss)
+               for loss in losses for eps in epsilons}
     control = build_attack("random_sign", epsilon=epsilons[0],
                            seed=args.rand_seed) if R > 0 else None
 
-    # Accumulators.
+    # Accumulators. clean: once (objective- and epsilon-independent)
+    # random: per epsilon (objective-independent). adv: per (objective, epsilon)
     clean_sum = {k: 0.0 for k in KEYS}
-    adv_sum = {eps: {k: 0.0 for k in KEYS} for eps in epsilons}
-    rand_sum = {eps: {k: 0.0 for k in KEYS} for eps in epsilons}   # per-sample draw-mean, summed
+    rand_sum = {eps: {k: 0.0 for k in KEYS} for eps in epsilons}    # per-sample draw-mean, summed
     rand_std_sum = {eps: 0.0 for eps in epsilons}                  # sum over samples of within-draw EPE std
-    drift = {eps: 0.0 for eps in epsilons}
+    adv_sum = {(loss, eps): {k: 0.0 for k in KEYS}
+               for loss in losses for eps in epsilons}
+    drift = {(loss, eps): 0.0 for loss in losses for eps in epsilons}
     n = 0
 
     for E, M, label in tqdm(loader, desc="Sweeping"):
@@ -145,25 +157,19 @@ def main():
         label = label.to(device=device, dtype=torch.float32)       # [B, 2, H, W]
         M = M.to(device=device)
 
-        # Clean prediction is epsilon-independent -- compute once.
+        # Clean prediction is objective and epsilon independent so compute once per sample
         cm = metrics(predict(net, E), label, M)
         for k, cv in zip(KEYS, cm):
             clean_sum[k] += cv
 
         for eps in epsilons:
-            E_adv = attacks[eps](E, model=net, label=label, M=M)
-            drift[eps] = max(drift[eps], (E_adv.sum() - E.sum()).abs().item())
-            am = metrics(predict(net, E_adv), label, M)
-            for k, av in zip(KEYS, am):
-                adv_sum[eps][k] += av
-
+            # Random-sign control: once per epsilon (no objective, gradient-free)
             if control is not None:
                 control.epsilon = eps
                 draw_acc = [0.0, 0.0, 0.0]
                 epe_sq = 0.0
                 for _ in range(R):
-                    E_rand = control(E)                            # model/label ignored
-                    rm = metrics(predict(net, E_rand), label, M)
+                    rm = metrics(predict(net, control(E)), label, M)  # model/label ignored
                     for j in range(3):
                         draw_acc[j] += rm[j]
                     epe_sq += rm[0] * rm[0]
@@ -173,6 +179,15 @@ def main():
                 # (0 when R==1); averaged over samples in the report below.
                 m_epe = draw_acc[0] / R
                 rand_std_sum[eps] += math.sqrt(max(epe_sq / R - m_epe * m_epe, 0.0))
+
+            # Attack: one run per objective (fgsm/pgd), each measured under all metrics.
+            for loss in losses:
+                E_adv = attacks[(loss, eps)](E, model=net, label=label, M=M)
+                drift[(loss, eps)] = max(drift[(loss, eps)],
+                                         (E_adv.sum() - E.sum()).abs().item())
+                am = metrics(predict(net, E_adv), label, M)
+                for k, av in zip(KEYS, am):
+                    adv_sum[(loss, eps)][k] += av
 
         n += 1
         if args.max_chunks is not None and n >= args.max_chunks:
@@ -185,46 +200,52 @@ def main():
 
     # ---- Report -----------------------------------------------------------
     print(f"\nEvaluated {n} samples | attack = '{args.attack}' | R = {R}")
-    print(f"Clean EPE = {clean_avg['EPE']:.4f}\n")
-    hdr = (f"{'epsilon':>10}{'adv_EPE':>10}{'rand_EPE':>12}{'adv-rand':>10}"
-           f"{'adv-clean':>11}{'drift':>12}")
-    print(hdr)
-    print("-" * len(hdr))
+    print(f"Clean:  EPE {clean_avg['EPE']:.4f} | angular {clean_avg['angular_deg']:.4f} deg "
+          f"| 1-cos {clean_avg['one_minus_cos']:.4f}\n")
+
     rows = []
-    for eps in epsilons:
-        adv_avg = {k: adv_sum[eps][k] / n for k in KEYS}
-        if control is not None:
-            rand_avg = {k: rand_sum[eps][k] / n for k in KEYS}
-            rand_std = rand_std_sum[eps] / n
-        else:
-            rand_avg = {k: float("nan") for k in KEYS}
-            rand_std = float("nan")
+    for loss in losses:
+        print(f"== attack objective: maximise {loss} ==")
+        hdr = (f"{'epsilon':>9}{'adv_EPE':>9}{'adv_ang':>9}{'adv_cos':>9}"
+               f"{'rand_EPE':>10}{'adv-rand':>10}{'drift':>11}")
+        print(hdr)
+        print("-" * len(hdr))
+        for eps in epsilons:
+            adv_avg = {k: adv_sum[(loss, eps)][k] / n for k in KEYS}
+            if control is not None:
+                rand_avg = {k: rand_sum[eps][k] / n for k in KEYS}
+                rand_std = rand_std_sum[eps] / n
+            else:
+                rand_avg = {k: float("nan") for k in KEYS}
+                rand_std = float("nan")
 
-        adv_vs_rand = adv_avg["EPE"] - rand_avg["EPE"]
-        print(f"{eps:>10.4g}{adv_avg['EPE']:>10.4f}"
-              f"{rand_avg['EPE']:>9.4f}+-{rand_std:<0.3f}"
-              f"{adv_vs_rand:>+10.4f}{adv_avg['EPE'] - clean_avg['EPE']:>+11.4f}"
-              f"{drift[eps]:>12.4g}")
+            adv_vs_rand = adv_avg["EPE"] - rand_avg["EPE"]
+            print(f"{eps:>9.4g}{adv_avg['EPE']:>9.4f}{adv_avg['angular_deg']:>9.4f}"
+                  f"{adv_avg['one_minus_cos']:>9.4f}{rand_avg['EPE']:>10.4f}"
+                  f"{adv_vs_rand:>+10.4f}{drift[(loss, eps)]:>11.4g}")
 
-        rows.append({
-            "epsilon": eps,
-            "clean_EPE": clean_avg["EPE"],
-            "adv_EPE": adv_avg["EPE"],
-            "rand_EPE_mean": rand_avg["EPE"],
-            "rand_EPE_std": rand_std,
-            "adv_minus_rand_EPE": adv_vs_rand,
-            "delta_adv_EPE": adv_avg["EPE"] - clean_avg["EPE"],
-            "delta_rand_EPE": rand_avg["EPE"] - clean_avg["EPE"],
-            "adv_angular_deg": adv_avg["angular_deg"],
-            "adv_one_minus_cos": adv_avg["one_minus_cos"],
-            "rand_angular_deg": rand_avg["angular_deg"],
-            "rand_one_minus_cos": rand_avg["one_minus_cos"],
-            "clean_angular_deg": clean_avg["angular_deg"],
-            "clean_one_minus_cos": clean_avg["one_minus_cos"],
-            "max_count_drift": drift[eps],
-            "n_samples": n,
-            "R": R,
-        })
+            rows.append({
+                "attack": args.attack,
+                "attack_loss": loss,
+                "epsilon": eps,
+                "clean_EPE": clean_avg["EPE"],
+                "clean_angular_deg": clean_avg["angular_deg"],
+                "clean_one_minus_cos": clean_avg["one_minus_cos"],
+                "adv_EPE": adv_avg["EPE"],
+                "adv_angular_deg": adv_avg["angular_deg"],
+                "adv_one_minus_cos": adv_avg["one_minus_cos"],
+                "rand_EPE_mean": rand_avg["EPE"],
+                "rand_EPE_std": rand_std,
+                "rand_angular_deg": rand_avg["angular_deg"],
+                "rand_one_minus_cos": rand_avg["one_minus_cos"],
+                "adv_minus_rand_EPE": adv_vs_rand,
+                "delta_adv_EPE": adv_avg["EPE"] - clean_avg["EPE"],
+                "delta_rand_EPE": rand_avg["EPE"] - clean_avg["EPE"],
+                "max_count_drift": drift[(loss, eps)],
+                "n_samples": n,
+                "R": R,
+            })
+        print()
 
     # ---- CSV --------------------------------------------------------------
     csv_path = os.path.join(args.outdir, f"sweep_{args.attack}.csv")
@@ -232,7 +253,7 @@ def main():
         w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
         w.writeheader()
         w.writerows(rows)
-    print(f"\nSweep written to {csv_path}")
+    print(f"Sweep written to {csv_path} ({len(rows)} rows)")
 
 
 if __name__ == "__main__":

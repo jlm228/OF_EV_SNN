@@ -67,6 +67,15 @@ python sweep_epsilon.py --attack fgsm \
     --epsilons 0.0 0.002 0.005 0.01 0.02 0.05 --rand-restarts 5
 ```
 
+`--losses` adds the attack objective as a third axis -- one experiment per error
+type (maximise `epe`, `angular`, or `cosine`), each measured under all three
+metrics, so you can see how an objective degrades its own error vs. the others:
+
+```bash
+python sweep_epsilon.py --attack fgsm --losses epe angular cosine \
+    --epsilons 0.005 0.01 0.02
+```
+
 ## Adding a new threat
 
 1. Either add to an existing family (e.g. a new module inside `retiming/` or
