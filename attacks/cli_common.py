@@ -48,7 +48,9 @@ def add_common_model_args(p: argparse.ArgumentParser) -> None:
     """Flags that configure which checkpoint/dataset split to load."""
     p.add_argument("--root", default="data/dataset/saved_flow_data",
                    help="Dataset root (relative path).")
-    p.add_argument("--split", default="valid_split_thun_00_a.csv", help="Sequence list CSV.")
+    p.add_argument("--split", default="valid_split_thun_00_a.csv",
+                   help="Sequence-list CSV, or a directory under data/saved_flow_data/sequence_lists/ "
+                        "(e.g. test_instances) to sweep every *.csv it contains.")
     p.add_argument("--num-frames-per-ts", type=int, default=11)
     p.add_argument("--checkpoint", default="examples/checkpoint_epoch34.pth")
     p.add_argument("--multiply-factor", type=float, default=35.0)
@@ -80,35 +82,72 @@ def build_threat_from_args(args, **extra_cfg):
     return build_attack(args.attack, **cfg)
 
 
+def load_model(args, device=None):
+    """Load the trained checkpoint once. Returns ``(device, net)``.
+
+    Split out from data loading so callers that sweep several splits can build
+    the (expensive) network a single time and reuse it across loaders.
+    """
+    if device is None:
+        device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
+    net = NeuronPool_Separable_Pool3d(multiply_factor=args.multiply_factor).to(device)
+    net.load_state_dict(torch.load(args.checkpoint, map_location=device))
+    net.eval()
+    return device, net
+
+
+def make_loader(args, split=None):
+    """Build the DSEC ``(dataset, loader)`` for one split CSV (relative to
+    ``<root>/sequence_lists``). ``split`` defaults to ``args.split``.
+    """
+    split = args.split if split is None else split
+    dataset = DSECDatasetLite(root=args.root, file_list=split,
+                              num_frames_per_ts=args.num_frames_per_ts,
+                              stereo=False, transform=None)
+    loader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False,
+                                         drop_last=False, pin_memory=True)
+    return dataset, loader
+
+
 def load_model_and_data(args):
     """Load the checkpoint + DSEC validation split shared by both CLI tools.
 
     Returns ``(device, net, dataset, loader)``.
     """
-    device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
-
-    dataset = DSECDatasetLite(root=args.root, file_list=args.split,
-                              num_frames_per_ts=args.num_frames_per_ts,
-                              stereo=False, transform=None)
-    loader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False,
-                                         drop_last=False, pin_memory=True)
-
-    net = NeuronPool_Separable_Pool3d(multiply_factor=args.multiply_factor).to(device)
-    net.load_state_dict(torch.load(args.checkpoint, map_location=device))
-    net.eval()
-
+    device, net = load_model(args)
+    dataset, loader = make_loader(args)
     return device, net, dataset, loader
 
 
-def load_sample_names(args):
+def resolve_splits(args):
+    """Expand ``args.split`` to a list of split-CSV paths (relative to
+    ``<root>/sequence_lists``).
+
+    If ``args.split`` names a *directory* under ``sequence_lists`` (e.g.
+    ``test_instances``), every ``*.csv`` inside it is returned, sorted, so one
+    command can sweep a whole folder of per-sequence splits. Otherwise the single
+    split is returned unchanged (backward compatible).
+    """
+    base = os.path.join(args.root, "sequence_lists", args.split)
+    if os.path.isdir(base):
+        csvs = sorted(f for f in os.listdir(base) if f.lower().endswith(".csv"))
+        if not csvs:
+            raise SystemExit(f"No .csv files found in split directory '{base}'.")
+        return [os.path.join(args.split, f) for f in csvs]
+    return [args.split]
+
+
+def load_sample_names(args, split=None):
     """Ordered ``(sequences, filenames)`` for each loader sample, from the split CSV.
 
     ``DSECDatasetLite`` iterates the split rows in order (``shuffle=False``) and takes each
     sample's label/mask from the *second* file in the row, so that column is the canonical
     per-sample identity. The sequence name is that filename with its ``_<index>.npy`` suffix
-    stripped. Reconstructing here avoids changing the dataset's return signature.
+    stripped. ``split`` defaults to ``args.split``; pass a specific split when sweeping a
+    folder. Reconstructing here avoids changing the dataset's return signature.
     """
-    split_path = os.path.join(args.root, "sequence_lists", args.split)
+    split = args.split if split is None else split
+    split_path = os.path.join(args.root, "sequence_lists", split)
     rows = pd.read_csv(split_path, header=None)
     names = rows.iloc[:, 1].tolist()
     seqs = [re.sub(r"_\d+\.npy$", "", nm) for nm in names]
