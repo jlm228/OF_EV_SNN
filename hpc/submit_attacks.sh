@@ -1,6 +1,7 @@
 #!/bin/bash
-# Submit the full attack pipeline on BlueBEAR: calibrate epsilon (CPU) once, then
-# the FGSM and PGD sweeps (GPU) which wait for calibration via a Slurm dependency.
+# Submit the attack pipeline on BlueBEAR: calibrate epsilon (CPU) once, then the
+# FGSM sweep (GPU) which waits for calibration via a Slurm dependency.
+# (PGD is dropped for now; re-enable via the commented block below.)
 #
 # Run from anywhere; it cd's to the repo root itself:
 #   bash hpc/submit_attacks.sh
@@ -34,11 +35,12 @@ FGSM_ID=$(ATTACK=fgsm SPLIT="${SPLIT}" EXTRA_ARGS="${EXTRA_SMOKE}" \
            --export=ALL hpc/sweep_attack.slurm)
 echo "fgsm sweep     : job ${FGSM_ID}  (after ${CAL_ID})"
 
-PGD_ID=$(ATTACK=pgd SPLIT="${SPLIT}" EXTRA_ARGS="--iters 7 ${EXTRA_SMOKE}" \
-    sbatch --parsable --job-name=sweep_pgd --dependency=afterok:${CAL_ID} \
-           --export=ALL hpc/sweep_attack.slurm)
-echo "pgd sweep      : job ${PGD_ID}  (after ${CAL_ID})"
+# To also run PGD, uncomment:
+# PGD_ID=$(ATTACK=pgd SPLIT="${SPLIT}" EXTRA_ARGS="--iters 7 ${EXTRA_SMOKE}" \
+#     sbatch --parsable --job-name=sweep_pgd --dependency=afterok:${CAL_ID} \
+#            --export=ALL hpc/sweep_attack.slurm)
+# echo "pgd sweep      : job ${PGD_ID}  (after ${CAL_ID})"
 
 echo
 echo "Submitted. Watch with:  squeue --me"
-echo "Outputs land in results/sweep_fgsm/ and results/sweep_pgd/"
+echo "Outputs land in results/sweep_fgsm/"

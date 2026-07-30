@@ -16,7 +16,8 @@ epsilon range × objective, with gradient attribution) across the DSEC test sequ
    Reads that file (prepending `0.0` as the clean baseline) and runs `sweep_epsilon.py`
    over the split folder with `--attribution`.
 
-**One command** (chains calibrate → fgsm + pgd via a Slurm dependency):
+**One command** (chains calibrate → fgsm via a Slurm dependency; PGD is commented
+out in `submit_attacks.sh` for now):
 
 ```bash
 bash hpc/submit_attacks.sh          # full run

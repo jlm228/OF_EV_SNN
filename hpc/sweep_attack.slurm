@@ -8,7 +8,7 @@
 #   SPLIT          split CSV or folder under sequence_lists/
 #                  (default: valid_split_doubleseq.csv -- the 5 test sequences;
 #                   output is split per-sequence automatically)
-#   LOSSES         attack objectives                  (default: "epe angular cosine")
+#   LOSSES         attack objectives                  (default: "epe angular")
 #   RAND_RESTARTS  random-sign control draws R        (default: 5)
 #   EPS_FILE       calibrated epsilon list            (default: results/calibrated_epsilons.txt)
 #   OUTDIR         output directory                   (default: results/sweep_<ATTACK>)
@@ -33,7 +33,7 @@ mkdir -p hpc/logs
 
 ATTACK="${ATTACK:?set ATTACK=fgsm or ATTACK=pgd}"
 SPLIT="${SPLIT:-valid_split_doubleseq.csv}"     # the 5 preprocessed test sequences
-LOSSES="${LOSSES:-epe angular cosine}"
+LOSSES="${LOSSES:-epe angular}"
 RAND_RESTARTS="${RAND_RESTARTS:-5}"
 EPS_FILE="${EPS_FILE:-results/calibrated_epsilons.txt}"
 OUTDIR="${OUTDIR:-results/sweep_${ATTACK}}"
