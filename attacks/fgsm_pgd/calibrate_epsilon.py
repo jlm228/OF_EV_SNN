@@ -6,11 +6,15 @@ As event tensors are used, one unit of epsilon means:
 This is a very large pertubation for sparse data, so the epsilon range in this case
 is orders of magnitude smaller than the typical FGSM range for image recognition tasks.
 
-Run once. Copy the printed epsilon values into the attack sweep.
+Run once. The printed ``EPSILONS ...`` line (and the file named by ``$EPS_OUT``,
+if set) is written for the attack sweep to consume as ``--epsilons``.
 
 Use:
-    python calibrate_epsilon.py
+    python -m attacks.fgsm_pgd.calibrate_epsilon          # from the repo root
+    EPS_OUT=results/calibrated_epsilons.txt python -m attacks.fgsm_pgd.calibrate_epsilon
 """
+
+import os
 
 import numpy as np
 import torch
@@ -64,9 +68,22 @@ print(f"  largest count seen    {np.flatnonzero(counts).max()}\n")
 # Therefore, the attack injects roughly 0.5 * epsilon * n_voxels events.
 # This can be inverted to find the epsilon that injects a target fraction of clean events.
 print("  eps        injects   as % of clean events")
+eps_list = []
 for rho in MASS_FRACTIONS:
     eps = rho * avg_events_per_sample / (0.5 * n_voxels)
+    eps_list.append(eps)
     print(f"  {eps:<9.5f} {rho * avg_events_per_sample:>9,.0f}   {rho * 100:>5.1f}%")
 
 print(f"\n  eps = 1.0 erases any occupied voxel holding 1 event "
       f"({frac_single * 100:.0f}% of them)")
+
+# Machine-readable output for the attack sweep: a single marked line, and -- when
+# EPS_OUT is set -- a file the HPC pipeline reads straight into `--epsilons`.
+eps_str = " ".join(f"{e:.6g}" for e in eps_list)
+print(f"\nEPSILONS {eps_str}")
+_out = os.environ.get("EPS_OUT")
+if _out:
+    os.makedirs(os.path.dirname(_out) or ".", exist_ok=True)
+    with open(_out, "w") as _f:
+        _f.write(eps_str + "\n")
+    print(f"Wrote epsilon list to {_out}")

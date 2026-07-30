@@ -1,0 +1,4 @@
+# Shell / Slurm scripts must stay LF so they run on the Linux HPC (a CRLF
+# shebang line gives "bad interpreter"). Force it regardless of core.autocrlf.
+*.sh    text eol=lf
+*.slurm text eol=lf
