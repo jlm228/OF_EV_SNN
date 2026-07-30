@@ -7,7 +7,10 @@ construction instead of by copy-paste discipline.
 """
 
 import argparse
+import os
+import re
 
+import pandas as pd
 import torch
 
 from network_3d.poolingNet_cat_1res import NeuronPool_Separable_Pool3d
@@ -95,3 +98,18 @@ def load_model_and_data(args):
     net.eval()
 
     return device, net, dataset, loader
+
+
+def load_sample_names(args):
+    """Ordered ``(sequences, filenames)`` for each loader sample, from the split CSV.
+
+    ``DSECDatasetLite`` iterates the split rows in order (``shuffle=False``) and takes each
+    sample's label/mask from the *second* file in the row, so that column is the canonical
+    per-sample identity. The sequence name is that filename with its ``_<index>.npy`` suffix
+    stripped. Reconstructing here avoids changing the dataset's return signature.
+    """
+    split_path = os.path.join(args.root, "sequence_lists", args.split)
+    rows = pd.read_csv(split_path, header=None)
+    names = rows.iloc[:, 1].tolist()
+    seqs = [re.sub(r"_\d+\.npy$", "", nm) for nm in names]
+    return seqs, names

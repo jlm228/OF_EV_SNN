@@ -1,8 +1,5 @@
 """Sweep an additive L-infinity attack over an epsilon range, with a control.
 
-Extends the single-point comparison in ``evaluate_attack.py`` to the epsilon sweep
-step described for FGSM/PGD:
-
 Run the selected attack (``fgsm`` / ``pgd``) over the DSEC validation split for each 
 epsilon in a range, and report clean vs. adversarial flow error as a curve (one row per epsilon).
 
@@ -14,13 +11,20 @@ type (fgsm/pgd maximising EPE, angular, or cosine error), and *every* run is
 measured under *all* three metrics. Clean is computed once; the random-sign
 control is computed once per epsilon (it has no objective).
 
+Outputs (all under ``--outdir``, for a run with ``--attack A``):
+
+* ``raw_A_<sequence>.csv`` -- one file **per sequence**, the full raw data: one
+  long-format row per (sample x condition) evaluation, including every individual
+  random draw. Columns: ``sample_index, sequence, filename, condition,
+  attack_loss, epsilon, draw, EPE, angular_deg, one_minus_cos, count_drift``
+  (``condition`` in {clean, A, random}).
+* ``per_sequence_A.csv`` -- pooled averages, one row per (sequence, condition,
+  attack_loss, epsilon), with mean+std of each metric and count-drift.
+* ``sweep_A.csv`` -- the split-level aggregate curve (one row per objective x
+  epsilon); a quick convenience view, derivable from the pooled file.
+
 Examples
 --------
-FGSM sweep with a 5-draw random-sign control::
-
-    python sweep_epsilon.py --attack fgsm \
-        --epsilons 0.0 0.002 0.005 0.01 0.02 0.05 --rand-restarts 5
-
 One experiment per error type (EPE-, angular-, cosine-objective attacks)::
 
     python sweep_epsilon.py --attack fgsm --losses epe angular cosine \
@@ -38,6 +42,7 @@ import argparse
 import csv
 import math
 import os
+from collections import OrderedDict
 
 import torch
 from tqdm import tqdm
@@ -54,10 +59,20 @@ from attacks.cli_common import (
     add_common_attack_args,
     add_common_model_args,
     load_model_and_data,
+    load_sample_names,
 )
 
 RAD2DEG = 180.0 / math.pi
 KEYS = ["EPE", "angular_deg", "one_minus_cos"]
+
+# Long-format raw record: one row per (sample x condition) evaluation.
+RAW_COLS = ["sample_index", "sequence", "filename", "condition", "attack_loss",
+            "epsilon", "draw", "EPE", "angular_deg", "one_minus_cos", "count_drift"]
+# Per-sequence pooled record: one row per (sequence, condition, attack_loss, epsilon).
+POOL_COLS = ["sequence", "condition", "attack_loss", "epsilon", "n_points",
+             "EPE_mean", "EPE_std", "angular_deg_mean", "angular_deg_std",
+             "one_minus_cos_mean", "one_minus_cos_std",
+             "count_drift_mean", "count_drift_max"]
 
 
 def parse_args():
@@ -112,6 +127,26 @@ def build_attack_for(args, eps, loss):
     return build_attack(args.attack, **cfg)
 
 
+def _pool_add(pools, key, mvals, drift):
+    """Accumulate one (EPE, angular, cosine) triple + count-drift into ``pools[key]``.
+
+    ``pools`` is an ``OrderedDict`` keyed by (sequence, condition, attack_loss,
+    epsilon); each entry keeps running sums / sums-of-squares (for mean + std)
+    and the running / max count-drift. First insertion fixes the row's order.
+    """
+    p = pools.get(key)
+    if p is None:
+        p = {"n": 0, "sum": [0.0, 0.0, 0.0], "sumsq": [0.0, 0.0, 0.0],
+             "drift_sum": 0.0, "drift_max": 0.0}
+        pools[key] = p
+    p["n"] += 1
+    for j in range(3):
+        p["sum"][j] += mvals[j]
+        p["sumsq"][j] += mvals[j] * mvals[j]
+    p["drift_sum"] += drift
+    p["drift_max"] = max(p["drift_max"], drift)
+
+
 def main():
     args = parse_args()
     os.makedirs(args.outdir, exist_ok=True)
@@ -140,8 +175,29 @@ def main():
     control = build_attack("random_sign", epsilon=epsilons[0],
                            seed=args.rand_seed) if R > 0 else None
 
-    # Accumulators. clean: once (objective- and epsilon-independent)
-    # random: per epsilon (objective-independent). adv: per (objective, epsilon)
+    # Per-sample identity (sequence + filename), aligned to loader order.
+    seqs, names = load_sample_names(args)
+
+    # Raw per-sequence writers, opened lazily so the full raw dataset never has
+    # to live in memory; one file `raw_<attack>_<sequence>.csv` per sequence.
+    raw_writers, raw_handles = {}, {}
+
+    def raw_writer(seq):
+        w = raw_writers.get(seq)
+        if w is None:
+            fh = open(os.path.join(args.outdir, f"raw_{args.attack}_{seq}.csv"),
+                      "w", newline="")
+            w = csv.writer(fh)
+            w.writerow(RAW_COLS)
+            raw_writers[seq], raw_handles[seq] = w, fh
+        return w
+
+    # Per-sequence pooled accumulators, keyed (sequence, condition, loss, epsilon).
+    pools = OrderedDict()
+
+    # Aggregate accumulators (the retained sweep_<attack>.csv curve).
+    # clean: once (objective- and epsilon-independent).
+    # random: per epsilon (objective-independent). adv: per (objective, epsilon).
     clean_sum = {k: 0.0 for k in KEYS}
     rand_sum = {eps: {k: 0.0 for k in KEYS} for eps in epsilons}    # per-sample draw-mean, summed
     rand_std_sum = {eps: 0.0 for eps in epsilons}                  # sum over samples of within-draw EPE std
@@ -157,19 +213,31 @@ def main():
         label = label.to(device=device, dtype=torch.float32)       # [B, 2, H, W]
         M = M.to(device=device)
 
+        seq = seqs[n] if n < len(seqs) else ""
+        fname = names[n] if n < len(names) else ""
+        wr = raw_writer(seq)
+
         # Clean prediction is objective and epsilon independent so compute once per sample
         cm = metrics(predict(net, E), label, M)
         for k, cv in zip(KEYS, cm):
             clean_sum[k] += cv
+        wr.writerow([n, seq, fname, "clean", "", "", "", cm[0], cm[1], cm[2], 0.0])
+        _pool_add(pools, (seq, "clean", "", ""), cm, 0.0)
 
         for eps in epsilons:
-            # Random-sign control: once per epsilon (no objective, gradient-free)
+            # Random-sign control: once per epsilon (no objective, gradient-free);
+            # every draw is emitted as its own raw row and pooled per sequence.
             if control is not None:
                 control.epsilon = eps
                 draw_acc = [0.0, 0.0, 0.0]
                 epe_sq = 0.0
-                for _ in range(R):
-                    rm = metrics(predict(net, control(E)), label, M)  # model/label ignored
+                for r in range(R):
+                    E_rand = control(E)                            # model/label ignored
+                    rm = metrics(predict(net, E_rand), label, M)
+                    d = (E_rand.sum() - E.sum()).abs().item()
+                    wr.writerow([n, seq, fname, "random", "", eps, r,
+                                 rm[0], rm[1], rm[2], d])
+                    _pool_add(pools, (seq, "random", "", eps), rm, d)
                     for j in range(3):
                         draw_acc[j] += rm[j]
                     epe_sq += rm[0] * rm[0]
@@ -183,11 +251,14 @@ def main():
             # Attack: one run per objective (fgsm/pgd), each measured under all metrics.
             for loss in losses:
                 E_adv = attacks[(loss, eps)](E, model=net, label=label, M=M)
-                drift[(loss, eps)] = max(drift[(loss, eps)],
-                                         (E_adv.sum() - E.sum()).abs().item())
+                d = (E_adv.sum() - E.sum()).abs().item()
+                drift[(loss, eps)] = max(drift[(loss, eps)], d)
                 am = metrics(predict(net, E_adv), label, M)
                 for k, av in zip(KEYS, am):
                     adv_sum[(loss, eps)][k] += av
+                wr.writerow([n, seq, fname, args.attack, loss, eps, "",
+                             am[0], am[1], am[2], d])
+                _pool_add(pools, (seq, args.attack, loss, eps), am, d)
 
         n += 1
         if args.max_chunks is not None and n >= args.max_chunks:
@@ -247,13 +318,34 @@ def main():
             })
         print()
 
-    # ---- CSV --------------------------------------------------------------
+    # ---- Aggregate curve CSV ---------------------------------------------
     csv_path = os.path.join(args.outdir, f"sweep_{args.attack}.csv")
     with open(csv_path, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
         w.writeheader()
         w.writerows(rows)
-    print(f"Sweep written to {csv_path} ({len(rows)} rows)")
+    print(f"Aggregate curve written to {csv_path} ({len(rows)} rows)")
+
+    # ---- Raw per-sequence files (close the streamed writers) --------------
+    for fh in raw_handles.values():
+        fh.close()
+    print(f"Raw per-sample data written to {len(raw_handles)} file(s): "
+          f"{os.path.join(args.outdir, f'raw_{args.attack}_<sequence>.csv')}")
+
+    # ---- Per-sequence pooled averages CSV --------------------------------
+    pool_path = os.path.join(args.outdir, f"per_sequence_{args.attack}.csv")
+    with open(pool_path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(POOL_COLS)
+        for (seq, cond, aloss, eps), p in pools.items():
+            nn = p["n"]
+            mean = [p["sum"][j] / nn for j in range(3)]
+            std = [math.sqrt(max(p["sumsq"][j] / nn - mean[j] * mean[j], 0.0))
+                   for j in range(3)]
+            w.writerow([seq, cond, aloss, eps, nn,
+                        mean[0], std[0], mean[1], std[1], mean[2], std[2],
+                        p["drift_sum"] / nn, p["drift_max"]])
+    print(f"Per-sequence pooled averages written to {pool_path} ({len(pools)} rows)")
 
 
 if __name__ == "__main__":

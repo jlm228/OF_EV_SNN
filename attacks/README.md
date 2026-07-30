@@ -76,6 +76,12 @@ python sweep_epsilon.py --attack fgsm --losses epe angular cosine \
     --epsilons 0.005 0.01 0.02
 ```
 
+Each run writes three kinds of output under `--outdir` (for `--attack A`): the
+full raw data as one long-format file **per sequence** `raw_A_<sequence>.csv`
+(one row per sample × condition, including every random draw), the pooled
+per-sequence averages `per_sequence_A.csv` (mean+std per sequence/condition/
+objective/epsilon), and the split-level aggregate curve `sweep_A.csv`.
+
 ## Adding a new threat
 
 1. Either add to an existing family (e.g. a new module inside `retiming/` or

@@ -24,11 +24,9 @@ import argparse
 import csv
 import math
 import os
-import re
 from collections import OrderedDict
 
 import numpy as np
-import pandas as pd
 import torch
 from tqdm import tqdm
 
@@ -44,6 +42,7 @@ from attacks.cli_common import (
     add_common_model_args,
     build_threat_from_args,
     load_model_and_data,
+    load_sample_names,
 )
 
 RAD2DEG = 180.0 / math.pi
@@ -61,20 +60,6 @@ def parse_args():
                    help="Also write per-sample and per-sequence-summary CSVs to results/.")
     p.add_argument("--outdir", default="results")
     return p.parse_args()
-
-
-def load_sample_names(args):
-    """Ordered (sequence, filename) for each loader sample, from the split CSV.
-
-    ``DSECDatasetLite`` iterates the split rows in order (``shuffle=False``) and takes each
-    sample's label/M from the *second* file in the row, so that column is the canonical
-    per-sample identity. Reconstructing here avoids changing the dataset's return signature.
-    """
-    split_path = os.path.join(args.root, "sequence_lists", args.split)
-    rows = pd.read_csv(split_path, header=None)
-    names = rows.iloc[:, 1].tolist()
-    seqs = [re.sub(r"_\d+\.npy$", "", nm) for nm in names]
-    return seqs, names
 
 
 @torch.no_grad()
