@@ -82,6 +82,13 @@ full raw data as one long-format file **per sequence** `raw_A_<sequence>.csv`
 per-sequence averages `per_sequence_A.csv` (mean+std per sequence/condition/
 objective/epsilon), and the split-level aggregate curve `sweep_A.csv`.
 
+`--attribution` adds "where is the vulnerability concentrated" data from the
+clean-input gradient `|dJ/dE|` (one backward per sample per objective,
+epsilon-independent): `attribution_A.csv` with per-sample **temporal** (T bins)
+and **polarity** (ON/OFF) profiles, and a per-`(objective, sequence)` mean
+**spatial heatmap** `gradmap_A_<objective>_<sequence>.npy`. Storage stays small —
+the H×W maps are running means per sequence, not saved per sample.
+
 ## Adding a new threat
 
 1. Either add to an existing family (e.g. a new module inside `retiming/` or

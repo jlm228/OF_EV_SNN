@@ -27,6 +27,7 @@ import math
 import os
 from collections import OrderedDict
 
+import numpy as np
 import torch
 from tqdm import tqdm
 
@@ -38,6 +39,7 @@ from eval.vector_loss_functions import (
     cosine_loss_function,
 )
 from attacks.base import build_attack
+from attacks.fgsm_pgd._common import _loss_fn, _input_grad, _FreezeParams
 from attacks.cli_common import (
     add_common_attack_args,
     add_common_model_args,
@@ -58,6 +60,10 @@ POOL_COLS = ["sequence", "condition", "attack_loss", "epsilon", "n_points",
              "EPE_mean", "EPE_std", "angular_deg_mean", "angular_deg_std",
              "one_minus_cos_mean", "one_minus_cos_std",
              "count_drift_mean", "count_drift_max"]
+# Attribution profile record (--attribution): one row per (sample, objective, axis, index),
+# holding the summed input-gradient magnitude |dJ/dE| marginalised onto that axis.
+ATTR_COLS = ["sample_index", "sequence", "filename", "objective",
+             "axis", "index", "grad_sum"]
 
 
 def parse_args():
@@ -78,6 +84,11 @@ def parse_args():
                         "(0 disables the control).")
     p.add_argument("--rand-seed", type=int, default=1234,
                    help="Seed for the random-sign control draws (reproducible).")
+    p.add_argument("--attribution", action="store_true",
+                   help="Also record where vulnerability concentrates: per-sample "
+                        "temporal (T) and polarity (2) profiles of the clean-input "
+                        "gradient |dJ/dE|, plus a per-sequence mean spatial heatmap "
+                        "(one backward per sample per objective; epsilon-independent).")
     p.add_argument("--outdir", default="results")
     return p.parse_args()
 
@@ -185,6 +196,13 @@ def main():
     drift = {(loss, eps): 0.0 for loss in losses for eps in epsilons}
     n = 0
 
+    # Attribution: clean-input gradient |dJ/dE| marginals. Per-sample temporal /
+    # polarity rows (tiny) go to attr_rows; spatial maps are accumulated into a
+    # running mean per (objective, sequence) to avoid storing per-sample H x W.
+    attr_loss_fns = {ls: _loss_fn(ls) for ls in losses} if args.attribution else {}
+    attr_rows = []
+    gradmaps = {}   # (objective, sequence) -> [running_sum HxW ndarray, count]
+
     for split in splits:
         _, loader = make_loader(args, split)
         seqs, names = load_sample_names(args, split)
@@ -206,6 +224,28 @@ def main():
                 clean_sum[k] += cv
             wr.writerow([n, seq, fname, "clean", "", "", "", cm[0], cm[1], cm[2], 0.0])
             _pool_add(pools, (seq, "clean", "", ""), cm, 0.0)
+
+            # Attribution: clean-input gradient |dJ/dE| per objective (epsilon-independent,
+            # so computed once per sample). Reduced to temporal (T) + polarity (C) profiles
+            # (per-sample rows) and accumulated into a per-(objective, sequence) spatial map.
+            if args.attribution:
+                with _FreezeParams(net):
+                    for ls in losses:
+                        grad, _ = _input_grad(net, E, label, M, attr_loss_fns[ls])
+                        g = grad[0].abs()                                  # [C, T, H, W]
+                        temporal = g.sum(dim=(0, 2, 3)).cpu().numpy()      # [T]
+                        polarity = g.sum(dim=(1, 2, 3)).cpu().numpy()      # [C]
+                        spatial = g.sum(dim=(0, 1)).cpu().numpy()          # [H, W]
+                        for t, v in enumerate(temporal):
+                            attr_rows.append([n, seq, fname, ls, "time", t, float(v)])
+                        for c, v in enumerate(polarity):
+                            attr_rows.append([n, seq, fname, ls, "polarity", c, float(v)])
+                        acc = gradmaps.get((ls, seq))
+                        if acc is None:
+                            gradmaps[(ls, seq)] = [spatial.astype(np.float64), 1]
+                        else:
+                            acc[0] += spatial
+                            acc[1] += 1
 
             for eps in epsilons:
                 # Random-sign control: once per epsilon (no objective, gradient-free);
@@ -330,6 +370,21 @@ def main():
                         mean[0], std[0], mean[1], std[1], mean[2], std[2],
                         p["drift_sum"] / nn, p["drift_max"]])
     print(f"Per-sequence pooled averages written to {pool_path} ({len(pools)} rows)")
+
+    # ---- Attribution: temporal/polarity profiles + per-sequence spatial maps ---
+    if args.attribution:
+        attr_path = os.path.join(args.outdir, f"attribution_{args.attack}.csv")
+        with open(attr_path, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(ATTR_COLS)
+            w.writerows(attr_rows)
+        for (ls, seq), (acc, cnt) in gradmaps.items():
+            mean_map = (acc / cnt).astype(np.float32)                  # [H, W]
+            np.save(os.path.join(args.outdir, f"gradmap_{args.attack}_{ls}_{seq}.npy"),
+                    mean_map)
+        print(f"Attribution profiles written to {attr_path} ({len(attr_rows)} rows); "
+              f"{len(gradmaps)} spatial heatmap(s): "
+              f"{os.path.join(args.outdir, f'gradmap_{args.attack}_<objective>_<sequence>.npy')}")
 
 
 if __name__ == "__main__":
