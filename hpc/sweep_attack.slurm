@@ -5,7 +5,9 @@
 #
 # Driven by environment variables (set them before sbatch, pass with --export=ALL):
 #   ATTACK         fgsm | pgd                         (required)
-#   SPLIT_DIR      split folder under sequence_lists/ (default: test_instances)
+#   SPLIT          split CSV or folder under sequence_lists/
+#                  (default: valid_split_doubleseq.csv -- the 5 test sequences;
+#                   output is split per-sequence automatically)
 #   LOSSES         attack objectives                  (default: "epe angular cosine")
 #   RAND_RESTARTS  random-sign control draws R        (default: 5)
 #   EPS_FILE       calibrated epsilon list            (default: results/calibrated_epsilons.txt)
@@ -30,7 +32,7 @@ source hpc/env.sh
 mkdir -p hpc/logs
 
 ATTACK="${ATTACK:?set ATTACK=fgsm or ATTACK=pgd}"
-SPLIT_DIR="${SPLIT_DIR:-test_instances}"
+SPLIT="${SPLIT:-valid_split_doubleseq.csv}"     # the 5 preprocessed test sequences
 LOSSES="${LOSSES:-epe angular cosine}"
 RAND_RESTARTS="${RAND_RESTARTS:-5}"
 EPS_FILE="${EPS_FILE:-results/calibrated_epsilons.txt}"
@@ -40,7 +42,7 @@ EXTRA_ARGS="${EXTRA_ARGS:-}"
 [ -f "${EPS_FILE}" ] || { echo "ERROR: ${EPS_FILE} not found -- run calibrate_epsilon.slurm first."; exit 1; }
 EPSILONS="0.0 $(cat "${EPS_FILE}")"     # clean baseline + calibrated points
 
-echo "attack=${ATTACK} | split=${SPLIT_DIR} | losses=[${LOSSES}] | R=${RAND_RESTARTS}"
+echo "attack=${ATTACK} | split=${SPLIT} | losses=[${LOSSES}] | R=${RAND_RESTARTS}"
 echo "epsilons=[${EPSILONS}] | outdir=${OUTDIR} | extra=[${EXTRA_ARGS}]"
 
 # Unquoted list vars are intentional (nargs='+' flags). Model/data flags use the
@@ -48,7 +50,7 @@ echo "epsilons=[${EPSILONS}] | outdir=${OUTDIR} | extra=[${EXTRA_ARGS}]"
 # root data/dataset/saved_flow_data); override via EXTRA_ARGS if needed.
 python sweep_epsilon.py \
     --attack "${ATTACK}" \
-    --split "${SPLIT_DIR}" \
+    --split "${SPLIT}" \
     --losses ${LOSSES} \
     --epsilons ${EPSILONS} \
     --rand-restarts "${RAND_RESTARTS}" \

@@ -23,13 +23,14 @@ bash hpc/submit_attacks.sh          # full run
 SMOKE=1 bash hpc/submit_attacks.sh  # 5 samples/sequence first, to check end-to-end
 ```
 
-## Prerequisite: the split folder
+## The split
 
-The sweep processes **every `*.csv`** in `data/dataset/saved_flow_data/sequence_lists/<SPLIT_DIR>`
-(default `SPLIT_DIR=test_instances`). Populate it with one per-sequence split CSV for
-each of the paper's 5 test sequences — `thun_00_a, zurich_city_02_d, zurich_city_03_a,
-zurich_city_08_a, zurich_city_11_b` — and make sure their preprocessed tensors exist.
-Override the folder with `SPLIT_DIR=... bash hpc/submit_attacks.sh`.
+Default `SPLIT=valid_split_doubleseq.csv` — the paper's 5 validation/test sequences
+(`thun_00_a, zurich_city_02_d, zurich_city_03_a, zurich_city_08_a, zurich_city_11_b`,
+2152 samples), already preprocessed for the baseline. Output is split **per sequence**
+automatically (the sequence is derived from each sample's filename), so no per-sequence
+input CSVs are needed. `SPLIT` may also be a folder, in which case every `*.csv` in it
+is swept. Override with `SPLIT=... bash hpc/submit_attacks.sh`.
 
 ## Outputs (per attack `A`, under `results/sweep_A/`)
 
