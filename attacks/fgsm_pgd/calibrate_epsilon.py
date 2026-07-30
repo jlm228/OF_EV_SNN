@@ -21,9 +21,11 @@ import torch
 
 from data.dsec_dataset_lite_stereo_21x9 import DSECDatasetLite
 
-ROOT = "data/dataset/saved_flow_data"
-SPLIT = "train_split_doubleseq.csv" # use training split to calibrate epsilon
-N_SAMPLES = 200 # num. of samples to randomly take from the dataset
+ROOT = os.environ.get("CALIB_ROOT", "data/dataset/saved_flow_data")
+# Any preprocessed split works -- calibration only needs representative event
+# statistics. Default to the validation split (present); override with CALIB_SPLIT.
+SPLIT = os.environ.get("CALIB_SPLIT", "valid_split_doubleseq.csv")
+N_SAMPLES = int(os.environ.get("CALIB_N", "200")) # samples to randomly scan
 MASS_FRACTIONS = [0.005, 0.01, 0.02, 0.05, 0.10, 0.25] # target percentages of clean events to inject as noise
 
 # Load dataset and pick samples
