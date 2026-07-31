@@ -14,6 +14,7 @@ Use:
     EPS_OUT=results/calibrated_epsilons.txt python -m attacks.fgsm_pgd.calibrate_epsilon
 """
 
+import json
 import os
 
 import numpy as np
@@ -89,3 +90,30 @@ if _out:
     with open(_out, "w") as _f:
         _f.write(eps_str + "\n")
     print(f"Wrote epsilon list to {_out}")
+
+# The epsilon <-> "% of clean events" mapping is exact by construction above, so
+# record it rather than leaving plotting to re-derive it from measured drift.
+# plots.py reads this to label the budget axis in physical units.
+_json = os.environ.get("CALIB_JSON", "results/epsilon_calibration.json")
+if _json:
+    os.makedirs(os.path.dirname(_json) or ".", exist_ok=True)
+    payload = {}
+    if os.path.isfile(_json):                       # keep any earlier fields
+        try:
+            with open(_json) as _f:
+                payload = json.load(_f)
+        except (json.JSONDecodeError, OSError):
+            payload = {}
+    payload.update({
+        "root": ROOT,
+        "split": SPLIT,
+        "n_samples_scanned": int(n),
+        "voxels_per_sample": int(n_voxels),
+        "events_per_sample": float(avg_events_per_sample),
+        "occupied_fraction": float(sparsity),
+        "budget": [{"epsilon": float(e), "percent_of_clean_events": float(rho * 100)}
+                   for e, rho in zip(eps_list, MASS_FRACTIONS)],
+    })
+    with open(_json, "w") as _f:
+        json.dump(payload, _f, indent=1)
+    print(f"Wrote calibration record to {_json}")
