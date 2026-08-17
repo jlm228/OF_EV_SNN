@@ -64,12 +64,25 @@ def magnitude_table(carla_csv, dsec_csv, mask="dsec_matched", dsec_mask="dsec", 
     return m if not m.empty else None
 
 
+def find(dirs, filename):
+    """First existing <dir>/<filename> across the search dirs, else None."""
+    for d in dirs:
+        path = os.path.join(d, filename)
+        if os.path.exists(path):
+            return path
+    return None
+
+
 def main():
     here = os.path.dirname(os.path.abspath(__file__))
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--capture", default="50761933")
-    ap.add_argument("--carla-eval", default=os.path.join(here, "results", "carla_eval"))
+    # Several, because each repo scores into its own results/carla_eval and results/ is
+    # gitignored, so the per-model CSVs are rarely all in one place.
+    ap.add_argument("--carla-eval", nargs="+",
+                    default=[os.path.join(here, "results", "carla_eval"),
+                             os.path.join(here, "..", "SDformerFlow", "results", "carla_eval")])
     ap.add_argument("--reproduction", default=os.path.join(here, "runs", "reproduction",
                                                            "reproduction.csv"))
     ap.add_argument("--dsec-metrics", default=None,
@@ -81,10 +94,13 @@ def main():
 
     dsec_metrics_path = args.dsec_metrics
     if dsec_metrics_path is None:
-        found = sorted(glob.glob(os.path.join(args.carla_eval, "dsec_*_metrics.csv")))
+        found = sorted(f for d in args.carla_eval
+                       for f in glob.glob(os.path.join(d, "dsec_*_metrics.csv")))
         dsec_metrics_path = found[-1] if found else None
 
     print("capture      : %s" % args.capture)
+    print("searching    : %s" % ", ".join(
+        os.path.relpath(d, here) for d in args.carla_eval))
     print("reference    : %s" % os.path.relpath(args.reproduction, here))
     unaudited = repro[repro["source"] == "notes"]["model"].tolist()
     if unaudited:
@@ -101,13 +117,14 @@ def main():
             continue
         dsec_epe = float(row.iloc[0]["epe"])
 
-        metrics_path = os.path.join(args.carla_eval, "%s_%s_metrics.csv" % (prefix, args.capture))
+        name = "%s_%s_metrics.csv" % (prefix, args.capture)
+        metrics_path = find(args.carla_eval, name)
         print("=" * 78)
         print("%s  (reproduced DSEC EPE %.3f px, %s)" % (model, dsec_epe, variant))
         print("=" * 78)
 
-        if not os.path.exists(metrics_path):
-            print("  no CARLA metrics at %s" % os.path.relpath(metrics_path, here))
+        if metrics_path is None:
+            print("  %s not found in any search directory" % name)
             print("  -> NOT RUN\n")
             missing.append(model)
             continue
@@ -151,7 +168,7 @@ def main():
                   % (m["EPE_ped"], m["EPE_ped"] / epe, m["EPE_ped"] / m["gtmag_ped"]))
 
         mag = magnitude_table(
-            os.path.join(args.carla_eval, "%s_%s_epe_vs_magnitude.csv" % (prefix, args.capture)),
+            find(args.carla_eval, "%s_%s_epe_vs_magnitude.csv" % (prefix, args.capture)) or "",
             dsec_metrics_path.replace("_metrics.csv", "_epe_vs_magnitude.csv")
             if dsec_metrics_path else "")
         if mag is not None:
