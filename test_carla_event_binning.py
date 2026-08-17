@@ -1,13 +1,11 @@
-"""Validate CARLA-hpc-scripts' inspect_capture.py::bin_window_events against real DSEC data,
-BEFORE trusting it on any CARLA capture (SNN_AV_experiment_plan.md Stage 1a).
-
-Runs a real DSEC sample (thun_00_a, window 1) through both the original preprocessing path
-(the precomputed event_tensors/11frames/thun_00_a_0001.npy already on disk) and the CARLA
-converter's binning function fed the same raw events.h5 window, and asserts they match.
-Runs entirely offline -- no HPC, no CARLA -- since both events.h5 and the precomputed tensor
-already exist locally.
+"""Check that inspect_capture.py's event binning matches DSEC's own preprocessing.
 
     python test_carla_event_binning.py
+
+Bins raw events straight out of DSEC's events.h5 with the CARLA converter's function and
+compares the result against the precomputed event tensors on disk, which were produced by the
+original preprocessing path. Any divergence in bin edges, polarity channel order or pixel
+indexing shows up as a mismatch here rather than as an unexplained accuracy drop later.
 """
 import os
 import sys
@@ -60,9 +58,8 @@ def main():
             for window_idx in window_idxs:
                 all_ok &= check_window(sequence, timestamps, window_idx, slicer)
 
-    assert all_ok, (
-        "CARLA converter's binning does not match DSEC's own preprocessing output for at "
-        "least one window -- do not trust it on CARLA data until this passes.")
+    assert all_ok, ("bin_window_events disagrees with the precomputed tensors for at least "
+                    "one window")
     print("\nPASS: bin_window_events reproduces DSEC's own preprocessing exactly.")
 
 
