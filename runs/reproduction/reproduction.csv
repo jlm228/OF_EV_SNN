@@ -1,5 +1,5 @@
 model,variant,test_resolution,params_m,epe,outlier_pct,aee_deg,published_epe,published_outlier_pct,published_aee_deg,n_samples,runid,source
 OF_EV_SNN,full,480x640,1.20,1.103,,5.42,1.10,,5.39,,,notes
-STTFlowNet-en4-b2-p4-w10,full,480x640,57.51,0.819,2.59,4.507,0.81,2.50,4.33,2152,,notes
-SDformerFlow-SPE-QK-s10-c2,full,480x640,54.92,1.563,10.69,6.992,1.61,8.91,7.23,2152,,notes
-SDformerFlow-SPE-QK-s10-c2,cropped,288x384,54.92,0.994,4.33,6.545,0.93,3.17,6.37,2152,,notes
+STTFlowNet-en4-b2-p4-w10,full,480x640,57.51,0.8190,2.5919,4.5073,0.81,2.50,4.33,2152,ed8df987eeda4d07b798e5d21753c7f6,metrics_yml
+SDformerFlow-SPE-QK-s10-c2,full,480x640,54.92,1.5633,10.6915,6.9920,1.61,8.91,7.23,2152,ca614f848f8e483f9718d5e797c4ff41,metrics_yml
+SDformerFlow-SPE-QK-s10-c2,cropped,288x384,54.92,0.9941,4.3345,6.5451,0.93,3.17,6.37,2152,ca614f848f8e483f9718d5e797c4ff41,metrics_yml
