@@ -38,12 +38,12 @@ PRED="results/carla_eval/pred/of_ev_snn"
 nvidia-smi
 python -c "import torch; assert torch.cuda.is_available(), 'no GPU visible to torch'; print('GPU:', torch.cuda.get_device_name(0))"
 
+# Counted without a pipe into head: under `set -o pipefail` head exits first, ls dies of
+# SIGPIPE, and the non-zero pipeline status trips `set -e` on a progress message.
 echo "=== capture ${CAPTURE} ==="
-ls "${CAPTURE}/tensors/gt_tensors" | head -1
-ls "${CAPTURE}/tensors/gt_tensors" | wc -l
+echo "gt tensors: $(find "${CAPTURE}/tensors/gt_tensors" -name '*.npy' | wc -l)"
 
 python carla_epe_eval.py --carla "${CAPTURE}" --dump-pred "${PRED}"
 
 echo "=== dumped ==="
-ls "${PRED}" | wc -l
-ls "${PRED}" | head -3
+echo "predictions: $(find "${PRED}" -name '*.npy' | wc -l) in ${PRED}"
