@@ -1,7 +1,4 @@
 """Common interface for optical-flow models.
-
-See SNN_AV_experiment_plan.md Stage 1a. OfEvSnnAdapter wraps the existing
-network_3d.poolingNet_cat_1res.NeuronPool_Separable_Pool3d unmodified.
 """
 from typing import Protocol
 
@@ -33,9 +30,7 @@ class FlowModel(Protocol):
 def _bin_window(x, y, t, pol, t_start_us, t_end_us, num_bins, height, width):
     """Matches CARLA-hpc-scripts/inspect_capture.py::bin_window_events and
     dsec_dataset_lite/data/event2frame.py::cumulate_spikes_into_frames exactly (verified by
-    test_carla_event_binning.py). Duplicated in full rather than imported so this module
-    doesn't depend on a sibling repo existing on disk -- keep the two in sync if either
-    changes; channel 0 = ON (pol truthy), channel 1 = OFF, native unrectified (x, y)."""
+    test_carla_event_binning.py)."""
     frame = np.zeros((num_bins, 2, height, width), dtype=np.float32)
     dt = (t_end_us - t_start_us) / num_bins
     on = np.asarray(pol).astype(bool)
@@ -53,8 +48,8 @@ class OfEvSnnAdapter:
     """Wraps NeuronPool_Separable_Pool3d to satisfy FlowModel.
 
     Stateful (SNN membrane potentials) but reset per-sample, not persisted across a
-    sequence -- confirmed from test_network_metrics.py, which calls reset_state() before
-    every forward(). Each 21-time-bin sample is self-contained; there is no cross-window
+    sequence (confirmed from test_network_metrics.py, which calls reset_state() before
+    every forward()). Each 21-time-bin sample is self-contained; there is no cross-window
     state to carry.
     """
 
@@ -92,6 +87,23 @@ class OfEvSnnAdapter:
         with torch.no_grad():
             _, _, _, pred = self.net(x)
         return pred
+
+    def forward_grad(self, x: torch.Tensor) -> torch.Tensor:
+        """The same forward with gradients enabled, for white-box attacks.
+
+        Two differences from `forward`, both deliberate:
+
+        * no `torch.no_grad()`, so d(flow)/d(input) exists. This is the whole point.
+        * state is reset HERE rather than by the caller. `forward` leaves that to the
+          evaluation loop (carla_epe_eval.py does it per sample), but an attack calls this
+          tens of times on one window and every call must start from the same state, or the
+          gradient is taken through a network that has been drifting since iteration zero.
+
+        Returns the finest flow field, `pred_1` -- index [-1] of the network's four outputs,
+        matching `attacks/fgsm_pgd/_common.py::_input_grad`.
+        """
+        self.reset_state()
+        return self.net(x.to(device=self.device, dtype=torch.float32))[-1]
 
     def reset_state(self) -> None:
         functional.reset_net(self.net)
