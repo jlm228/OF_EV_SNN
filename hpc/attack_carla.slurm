@@ -81,10 +81,12 @@ python attack_carla.py \
 
 echo
 echo "=== round trip: does the dumped .npy carry the div the objective reported? ==="
+RT_FAIL=0
 for REPORT in "${OUT}/reports/of_ev_snn_${LABEL}"_eps*.json; do
     python attack_carla.py --capture "${CAPTURE}" --round-trip "${REPORT}" \
-        --objective "${OBJECTIVE}" --epsilons 0 --clean-pred "${CLEAN}" --out "${OUT}"
+        --objective "${OBJECTIVE}" --epsilons 0 --clean-pred "${CLEAN}" --out "${OUT}" || RT_FAIL=1
 done
+[ "${RT_FAIL}" = "0" ] || { echo "round trip FAILED on at least one epsilon" >&2; exit 1; }
 
 echo
 echo "Done: ${LABEL}. Score with avoidance/eval/run_case, then avoidance.eval.sweep."

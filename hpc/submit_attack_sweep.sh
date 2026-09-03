@@ -87,7 +87,9 @@ ARRAY_ID=$(sbatch --parsable --array=1-"${N}" \
     hpc/attack_carla.slurm "${CAPTURE}" "${MANIFEST}")
 echo "attack array : job ${ARRAY_ID} (1-${N})"
 
-SCORE_ID=$(sbatch --parsable --dependency=afterok:"${ARRAY_ID}" \
+# afterany, not afterok: one failed cell must not block scoring and figures for the
+# rest. sweep.py reports what is missing.
+SCORE_ID=$(sbatch --parsable --dependency=afterany:"${ARRAY_ID}" \
     hpc/score_attack.slurm "${CAPTURE}")
 echo "score+figures: job ${SCORE_ID} (after ${ARRAY_ID})"
 echo
