@@ -30,9 +30,14 @@ MODEL="${2:-of_ev_snn}"
 CARLA_SCRIPTS_ROOT="${CARLA_SCRIPTS_ROOT:-../CARLA-hpc-scripts}"
 CAP_ABS="$(cd "${CAPTURE}" && pwd)"
 SCEN="$(basename "${CAP_ABS}")"
-REPO="$(cd "$(dirname "$0")/.." && pwd)"
+REPO="$(pwd)"   # already cd'd to SLURM_SUBMIT_DIR; $0 is Slurm's spooled copy
 ATTACK_ROOT="${REPO}/results/attack/${MODEL}"
 CLEAN_PRED="${REPO}/results/carla_eval/pred/${MODEL}"
+# The prefix the capture was voxelised under; not always "carla_<basename>", which is what
+# run_case would otherwise assume.
+_PROBE="$(find "${CLEAN_PRED}" -name "*_[0-9][0-9][0-9][0-9].npy" 2>/dev/null | head -1)"
+CAPTURE_ID="carla_${SCEN}"
+[ -n "${_PROBE}" ] && CAPTURE_ID="$(basename "${_PROBE}" .npy | sed "s/_[0-9]\{4\}$//")"
 
 # Results land in the CARLA-hpc-scripts checkout, in the same directory SDformerFlow's scoring
 # job writes to, so the grid figure spans all three models rather than one per repo.
@@ -52,10 +57,15 @@ for COND in no_action gt_oracle; do
 done
 
 # The model's own clean run: the epsilon-0 anchor every pair figure is read against.
+if [ ! -d "${CLEAN_PRED}" ]; then
+    echo "WARNING: no clean predictions at ${CLEAN_PRED}."
+    echo "         Without them there is no epsilon-0 anchor, so every pair figure and the"
+    echo "         whole grid will be empty. Run hpc/carla_eval.slurm for this capture."
+fi
 if [ -d "${CLEAN_PRED}" ] && [ ! -f "${RES}/${SCEN}_${MODEL}_clean.json" ]; then
     echo "=== clean anchor: ${MODEL} ==="
     python -m avoidance.eval.run_case --capture "${CAP_ABS}" --model "${MODEL}" \
-        --condition clean --pred "${CLEAN_PRED}" --out "${RES}"
+        --condition clean --pred "${CLEAN_PRED}" --capture-id "${CAPTURE_ID}" --out "${RES}"
 fi
 
 # One case per (objective, epsilon). --model is a free string and becomes the result filename,
@@ -73,7 +83,7 @@ for EPS_DIR in "${ATTACK_ROOT}"/*/eps*/; do
     NAME="${MODEL}__${OBJECTIVE}__eps${EPS}"
     echo "  ${NAME}"
     python -m avoidance.eval.run_case --capture "${CAP_ABS}" --model "${NAME}" \
-        --condition clean --pred "${EPS_DIR}" --out "${RES}"
+        --condition clean --pred "${EPS_DIR}" --capture-id "${CAPTURE_ID}" --out "${RES}"
 done
 
 # Reports live beside the dumps; sweep.py searches recursively and joins on
