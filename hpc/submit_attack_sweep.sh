@@ -67,6 +67,13 @@ SWEEP_EPS="${EPSILONS} ${EPS_HUGE}"
 # One line per array task: objective, sign, attack, iters, then the whole epsilon ramp.
 # epsilon 0 appears once per line and is the clean case; it is objective-independent, so
 # sweep.py collapses the duplicates when it builds the table.
+# PGD runs one forward and backward per iteration where FGSM runs one, so a limit sized for
+# FGSM will wall-clock out. Override with TIME rather than editing the slurm header, so one
+# submission can be given more without changing what the next one inherits.
+TIME="${TIME:-}"
+SB_TIME=""
+if [ -n "${TIME}" ]; then SB_TIME="--time=${TIME}"; fi
+
 MANIFEST="hpc/logs/attack_grid_$(basename "${CAPTURE}").txt"
 {
   echo "random_sign  none      ${ATTACK} ${ITERS} ${SWEEP_EPS}"
@@ -74,11 +81,14 @@ MANIFEST="hpc/logs/attack_grid_$(basename "${CAPTURE}").txt"
   echo "epe_masked   none      ${ATTACK} ${ITERS} ${SWEEP_EPS}"
   echo "div          suppress  ${ATTACK} ${ITERS} ${SWEEP_EPS}"
   echo "div          inflate   ${ATTACK} ${ITERS} ${SWEEP_EPS}"
-  # FGSM against the same objective, for the one-step-beats-iterative comparison. Skipped when
-  # ATTACK is already fgsm, or this row would duplicate the one above and two array tasks would
-  # write the same output directory.
+  # FGSM against the same objectives, for the one-step-beats-iterative comparison. Both signs
+  # of div, because which sign a model is vulnerable to differs by model and the comparison has
+  # to be run against the sign that actually bites. Skipped when ATTACK is already fgsm, or
+  # these rows would duplicate the ones above and two array tasks would write the same output
+  # directory.
   if [ "${ATTACK}" != "fgsm" ]; then
     echo "div          suppress  fgsm 1 ${SWEEP_EPS}"
+    echo "div          inflate   fgsm 1 ${SWEEP_EPS}"
   fi
 } > "${MANIFEST}"
 N=$(wc -l < "${MANIFEST}")
@@ -87,7 +97,7 @@ echo "manifest  ${MANIFEST} (${N} tasks)"
 cat "${MANIFEST}" | sed 's/^/    /'
 echo
 
-ARRAY_ID=$(sbatch --parsable --array=1-"${N}" \
+ARRAY_ID=$(sbatch --parsable --array=1-"${N}" ${SB_TIME} \
     hpc/attack_carla.slurm "${CAPTURE}" "${MANIFEST}")
 echo "attack array : job ${ARRAY_ID} (1-${N})"
 

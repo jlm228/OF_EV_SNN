@@ -54,6 +54,10 @@ CLEAN="results/carla_eval/pred/of_ev_snn"
 OUT="results/attack/of_ev_snn"
 LABEL="${OBJECTIVE}"
 [ "${OBJECTIVE}" = "div" ] && LABEL="div_${SIGN}"
+# The attack belongs in the label. One manifest carries the same objective under both
+# PGD and FGSM -- that pair IS the one-step-beats-iterative check -- and without this
+# the two array tasks would write the same output files at the same time.
+LABEL="${LABEL}_${ATTACK}"
 
 [ -d "${CLEAN}" ] || {
   echo "no clean predictions at ${CLEAN} -- run hpc/carla_eval.slurm first; every attacked" >&2
