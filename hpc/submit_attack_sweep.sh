@@ -49,6 +49,8 @@ fi
 
 ITERS="${ITERS:-10}"
 ATTACK="${ATTACK:-pgd}"
+# FGSM is one step by construction; the report records whatever the manifest says.
+[ "${ATTACK}" = "fgsm" ] && ITERS=1
 if [ "${SMOKE:-0}" != "0" ]; then
     EPSILONS="0.0 0.05"
     ITERS=4
@@ -67,9 +69,7 @@ SWEEP_EPS="${EPSILONS} ${EPS_HUGE}"
 # One line per array task: objective, sign, attack, iters, then the whole epsilon ramp.
 # epsilon 0 appears once per line and is the clean case; it is objective-independent, so
 # sweep.py collapses the duplicates when it builds the table.
-# PGD runs one forward and backward per iteration where FGSM runs one, so a limit sized for
-# FGSM will wall-clock out. Override with TIME rather than editing the slurm header, so one
-# submission can be given more without changing what the next one inherits.
+# Per-submission override of the slurm header's --time.
 TIME="${TIME:-}"
 SB_TIME=""
 if [ -n "${TIME}" ]; then SB_TIME="--time=${TIME}"; fi
@@ -81,11 +81,8 @@ MANIFEST="hpc/logs/attack_grid_$(basename "${CAPTURE}").txt"
   echo "epe_masked   none      ${ATTACK} ${ITERS} ${SWEEP_EPS}"
   echo "div          suppress  ${ATTACK} ${ITERS} ${SWEEP_EPS}"
   echo "div          inflate   ${ATTACK} ${ITERS} ${SWEEP_EPS}"
-  # FGSM against the same objectives, for the one-step-beats-iterative comparison. Both signs
-  # of div, because which sign a model is vulnerable to differs by model and the comparison has
-  # to be run against the sign that actually bites. Skipped when ATTACK is already fgsm, or
-  # these rows would duplicate the ones above and two array tasks would write the same output
-  # directory.
+  # FGSM rows for the one-step-vs-iterative comparison, both signs. Skipped when
+  # ATTACK is already fgsm, which would duplicate the rows above.
   if [ "${ATTACK}" != "fgsm" ]; then
     echo "div          suppress  fgsm 1 ${SWEEP_EPS}"
     echo "div          inflate   fgsm 1 ${SWEEP_EPS}"

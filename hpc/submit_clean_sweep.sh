@@ -1,0 +1,46 @@
+#!/bin/bash
+# Submit one clean-eval GPU job per capture.
+#
+#   bash hpc/submit_clean_sweep.sh <capture_dir> [<capture_dir> ...]
+#
+# Predictions land in results/carla_eval/pred/of_ev_snn as <capture_id>_<window>.npy.
+# Captures with no tensors/, or already predicted, are skipped; RERUN=1 submits them anyway.
+
+set -euo pipefail
+cd "$(cd "$(dirname "$0")/.." && pwd)"
+mkdir -p hpc/logs
+
+[ "$#" -ge 1 ] || { echo "usage: bash hpc/submit_clean_sweep.sh <capture_dir> [...]" >&2; exit 1; }
+
+PRED="results/carla_eval/pred/of_ev_snn"
+SUBMITTED=0
+SKIPPED=0
+
+for CAPTURE in "$@"; do
+  SCEN="$(basename "${CAPTURE}")"
+  if [ ! -d "${CAPTURE}/tensors" ]; then
+    echo "SKIP ${SCEN}: no tensors/"
+    SKIPPED=$((SKIPPED + 1))
+    continue
+  fi
+  # The capture id is the tensor filename prefix, not always carla_<basename>.
+  PROBE="$(find "${CAPTURE}/tensors/event_tensors" -name "*_[0-9][0-9][0-9][0-9].npy" \
+           2>/dev/null | head -1)"
+  CAPTURE_ID="carla_${SCEN}"
+  [ -n "${PROBE}" ] && CAPTURE_ID="$(basename "${PROBE}" .npy | sed 's/_[0-9]\{4\}$//')"
+
+  if [ "${RERUN:-0}" = "0" ] && [ -n "$(find "${PRED}" -name "${CAPTURE_ID}_*.npy" \
+                                        2>/dev/null | head -1)" ]; then
+    echo "SKIP ${SCEN}: predictions already present for ${CAPTURE_ID}"
+    SKIPPED=$((SKIPPED + 1))
+    continue
+  fi
+
+  JOB=$(sbatch --parsable hpc/carla_eval.slurm "${CAPTURE}")
+  echo "submitted ${SCEN}  (${CAPTURE_ID})  job ${JOB}"
+  SUBMITTED=$((SUBMITTED + 1))
+done
+
+echo
+echo "${SUBMITTED} submitted, ${SKIPPED} skipped"
+echo "Watch with: squeue --me"
