@@ -55,9 +55,13 @@ if [ "${SMOKE:-0}" != "0" ]; then
     echo "[SMOKE] epsilons ${EPSILONS}, ${ITERS} iters"
 fi
 
-# Stage 6 check 3: one unbounded epsilon, 10x the largest calibrated one. If even this fails to
-# force a collision, something is masking the gradient -- and it costs one extra epsilon value.
-EPS_HUGE="$(python -c "import sys; print('%g' % (10 * max(float(v) for v in sys.argv[1:])))" ${EPSILONS})"
+
+
+# Stage 6 check 3: one epsilon past the calibrated top, to confirm a larger budget does
+# more damage rather than less. Multiplier is deliberately small: far outside the band the
+# attack stops steering the flow and simply destroys it, which tests nothing. Override
+# with EPS_HIGH_MULT.
+EPS_HUGE="$(python -c "import sys; print('%g' % (${EPS_HIGH_MULT:-2} * max(float(v) for v in sys.argv[1:])))" ${EPSILONS})"
 SWEEP_EPS="${EPSILONS} ${EPS_HUGE}"
 
 # One line per array task: objective, sign, attack, iters, then the whole epsilon ramp.

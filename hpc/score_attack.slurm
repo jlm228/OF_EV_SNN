@@ -35,7 +35,7 @@ ATTACK_ROOT="${REPO}/results/attack/${MODEL}"
 CLEAN_PRED="${REPO}/results/carla_eval/pred/${MODEL}"
 # The prefix the capture was voxelised under; not always "carla_<basename>", which is what
 # run_case would otherwise assume.
-_PROBE="$(find "${CLEAN_PRED}" -name "*_[0-9][0-9][0-9][0-9].npy" 2>/dev/null | head -1)"
+_PROBE="$(find "${CLEAN_PRED}" -name "*${SCEN}_[0-9][0-9][0-9][0-9].npy" 2>/dev/null | head -1)"
 CAPTURE_ID="carla_${SCEN}"
 [ -n "${_PROBE}" ] && CAPTURE_ID="$(basename "${_PROBE}" .npy | sed "s/_[0-9]\{4\}$//")"
 
