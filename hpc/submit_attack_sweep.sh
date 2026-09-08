@@ -47,6 +47,16 @@ else
     echo "      calibrate with: python -m attacks.fgsm_pgd.calibrate_epsilon"
 fi
 
+
+# A sweep owns its output directory. Budgets are keyed by value, so a later sweep with a
+# different ramp leaves the previous one's cells behind and everything downstream scores both.
+# KEEP_PREVIOUS=1 to append instead.
+if [ "${KEEP_PREVIOUS:-0}" = "0" ]; then
+  for D in results/attack/of_ev_snn; do
+    [ -d "${D}" ] && { echo "clearing ${D}"; rm -rf "${D}"; }
+  done
+fi
+
 ITERS="${ITERS:-10}"
 ATTACK="${ATTACK:-pgd}"
 # FGSM is one step by construction; the report records whatever the manifest says.
