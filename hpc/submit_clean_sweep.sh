@@ -3,8 +3,9 @@
 #
 #   bash hpc/submit_clean_sweep.sh <capture_dir> [<capture_dir> ...]
 #
+# The eval job builds the capture's tensors if they are missing, so raw captures are fine.
 # Predictions land in results/carla_eval/pred/of_ev_snn as <capture_id>_<window>.npy.
-# Captures with no tensors/, or already predicted, are skipped; RERUN=1 submits them anyway.
+# Captures with no events.npy, or already predicted, are skipped; RERUN=1 submits them anyway.
 
 set -euo pipefail
 cd "$(cd "$(dirname "$0")/.." && pwd)"
@@ -18,8 +19,8 @@ SKIPPED=0
 
 for CAPTURE in "$@"; do
   SCEN="$(basename "${CAPTURE}")"
-  if [ ! -d "${CAPTURE}/tensors" ]; then
-    echo "SKIP ${SCEN}: no tensors/"
+  if [ ! -f "${CAPTURE}/events.npy" ]; then
+    echo "SKIP ${SCEN}: no events.npy"
     SKIPPED=$((SKIPPED + 1))
     continue
   fi
