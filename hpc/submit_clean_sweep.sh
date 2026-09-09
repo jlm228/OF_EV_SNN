@@ -30,13 +30,14 @@ for CAPTURE in "$@"; do
     continue
   fi
   # The capture id is the tensor filename prefix, not always carla_<basename>.
-  PROBE="$(find "${CAPTURE}/tensors/event_tensors" -name "*_[0-9][0-9][0-9][0-9].npy" \
-           2>/dev/null | head -1)"
+  # Tolerant of an unconverted capture: the directory need not exist, and a failing find
+  # must not take the script down under pipefail.
+  PROBE="$( { find "${CAPTURE}/tensors/event_tensors" -name "*_[0-9][0-9][0-9][0-9].npy" 2>/dev/null || true; } | head -1 )"
   CAPTURE_ID="carla_${SCEN}"
   [ -n "${PROBE}" ] && CAPTURE_ID="$(basename "${PROBE}" .npy | sed 's/_[0-9]\{4\}$//')"
 
-  if [ "${RERUN:-0}" = "0" ] && [ -n "$(find "${PRED}" -name "${CAPTURE_ID}_*.npy" \
-                                        2>/dev/null | head -1)" ]; then
+  SEEN="$( { find "${PRED}" -name "${CAPTURE_ID}_*.npy" 2>/dev/null || true; } | head -1 )"
+  if [ "${RERUN:-0}" = "0" ] && [ -n "${SEEN}" ]; then
     echo "SKIP ${SCEN}: predictions already present for ${CAPTURE_ID}"
     SKIPPED=$((SKIPPED + 1))
     continue
