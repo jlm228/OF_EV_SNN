@@ -57,6 +57,7 @@ if [ "${KEEP_PREVIOUS:-0}" = "0" ]; then
   done
 fi
 
+RAND_INIT="${RAND_INIT:-1}"
 ITERS="${ITERS:-10}"
 ATTACK="${ATTACK:-pgd}"
 # FGSM is one step by construction; the report records whatever the manifest says.
@@ -105,6 +106,7 @@ cat "${MANIFEST}" | sed 's/^/    /'
 echo
 
 ARRAY_ID=$(sbatch --parsable --array=1-"${N}" ${SB_TIME} \
+    --export=ALL,RAND_INIT="${RAND_INIT}" \
     hpc/attack_carla.slurm "${CAPTURE}" "${MANIFEST}")
 echo "attack array : job ${ARRAY_ID} (1-${N})"
 
