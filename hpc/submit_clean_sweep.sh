@@ -14,6 +14,11 @@ mkdir -p hpc/logs
 [ "$#" -ge 1 ] || { echo "usage: bash hpc/submit_clean_sweep.sh <capture_dir> [...]" >&2; exit 1; }
 
 PRED="results/carla_eval/pred/of_ev_snn"
+# DEPEND=<jobid> holds every job until that one finishes, so a clean
+# sweep can be queued behind an attack array without competing for GPUs.
+SB_DEP=""
+if [ -n "${DEPEND:-}" ]; then SB_DEP="--dependency=afterany:${DEPEND}"; fi
+
 SUBMITTED=0
 SKIPPED=0
 
@@ -37,7 +42,7 @@ for CAPTURE in "$@"; do
     continue
   fi
 
-  JOB=$(sbatch --parsable hpc/carla_eval.slurm "${CAPTURE}")
+  JOB=$(sbatch --parsable ${SB_DEP} hpc/carla_eval.slurm "${CAPTURE}")
   echo "submitted ${SCEN}  (${CAPTURE_ID})  job ${JOB}"
   SUBMITTED=$((SUBMITTED + 1))
 done
