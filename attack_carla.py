@@ -111,6 +111,8 @@ def main():
                          "per window and reused across every epsilon")
     ap.add_argument("--iters", type=int, default=10)
     ap.add_argument("--alpha", type=float, default=None, help="default: epsilon / 4")
+    ap.add_argument("--no-rand-init", action="store_true",
+                    help="start PGD at the clean input, not a random point in the ball")
     ap.add_argument("--seed", type=int, default=2305)
     ap.add_argument("--support", default="all", choices=["all", "nonzero"])
     ap.add_argument("--band-lo", type=int, default=None)
@@ -208,7 +210,8 @@ def main():
         # unbounded above, and capping it would be an event-consistency constraint, not an
         # L-infinity one.
         clip_min=0.0, clip_max=None, support_mode=args.support,
-        dump_adv_tensors=args.dump_adv_tensors, random_sign_fn=random_sign_fn)
+        dump_adv_tensors=args.dump_adv_tensors,
+                        rand_init=not args.no_rand_init, random_sign_fn=random_sign_fn)
 
     paths = runner.write_reports(reports, args.report or os.path.join(args.out, "reports"),
                                  reports[args.epsilons[0]]["label"])
