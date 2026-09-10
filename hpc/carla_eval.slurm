@@ -14,7 +14,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:1
 #SBATCH --time=2:0:0
-#SBATCH --mem=32G
+#SBATCH --mem=64G
 #SBATCH --job-name=of_ev_snn_carla
 #SBATCH --output=logs/carla_eval_%j.out
 #SBATCH --qos=bbgpu
@@ -37,7 +37,7 @@ CAP_ABS="$(cd "${CAPTURE}" && pwd)"
 mkdir -p "${CAP_ABS}/tensors"
 (
   flock 9
-  if [ -n "$(find "${CAP_ABS}/tensors/sequence_lists" -name '*_split_seq.csv' 2>/dev/null              | head -1)" ]; then
+  if [ -n "$(find "${CAP_ABS}/tensors/sequence_lists" -name '*.csv' 2>/dev/null              | head -1)" ]; then
     echo "tensors already present at ${CAP_ABS}/tensors -- skipping conversion"
   else
     echo "converting ${CAP_ABS} to the OF_EV_SNN layout"
@@ -45,7 +45,7 @@ mkdir -p "${CAP_ABS}/tensors"
   fi
 ) 9>"${CAP_ABS}/tensors.lock"
 
-[ -n "$(find "${CAP_ABS}/tensors/sequence_lists" -name '*_split_seq.csv' 2>/dev/null | head -1)" ] || {
+[ -n "$(find "${CAP_ABS}/tensors/sequence_lists" -name '*.csv' 2>/dev/null | head -1)" ] || {
   echo "conversion did not produce a sequence list under ${CAP_ABS}/tensors" >&2; exit 1; }
 
 PRED="results/carla_eval/pred/of_ev_snn"
