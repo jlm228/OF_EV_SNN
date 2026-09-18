@@ -62,3 +62,10 @@ python carla_epe_eval.py --carla "${CAPTURE}" --dump-pred "${PRED}"
 
 echo "=== dumped ==="
 echo "predictions: $(find "${PRED}" -name '*.npy' | wc -l) in ${PRED}"
+
+# Derived data, and only this model reads it. KEEP_TENSORS=1 leaves it for an attack sweep,
+# which perturbs these tensors; otherwise re-running this job rebuilds them from events.npy.
+if [ "${KEEP_TENSORS:-0}" != "1" ]; then
+    echo "removing ${CAP_ABS}/tensors"
+    rm -rf "${CAP_ABS}/tensors" "${CAP_ABS}/tensors.lock"
+fi
