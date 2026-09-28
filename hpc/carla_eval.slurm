@@ -4,7 +4,7 @@
 #   sbatch hpc/carla_eval.slurm <capture_dir>
 #
 # The capture must already carry <capture_dir>/tensors, which capture.slurm writes with
-# inspect_capture.py --voxelise. Predictions land in results/carla_eval/pred/of_ev_snn as
+# groundtruth/inspect_capture.py --voxelise. Predictions land in results/carla_eval/pred/of_ev_snn as
 # <capture_id>_<window>.npy, which is what CARLA-hpc-scripts/avoidance and score_flow.py read.
 #
 # The capture id is the tensor filenames' prefix, set when the capture was voxelised: the
@@ -41,7 +41,7 @@ mkdir -p "${CAP_ABS}/tensors"
     echo "tensors already present at ${CAP_ABS}/tensors -- skipping conversion"
   else
     echo "converting ${CAP_ABS} to the OF_EV_SNN layout"
-    ( cd "${CARLA_SCRIPTS_ROOT}" && python inspect_capture.py "${CAP_ABS}"         --voxelise --out "${CAP_ABS}/tensors" --capture-id "carla_$(basename "${CAP_ABS}")" )
+    ( cd "${CARLA_SCRIPTS_ROOT}" && python groundtruth/inspect_capture.py "${CAP_ABS}"         --voxelise --out "${CAP_ABS}/tensors" --capture-id "carla_$(basename "${CAP_ABS}")" )
   fi
 ) 9>"${CAP_ABS}/tensors.lock"
 

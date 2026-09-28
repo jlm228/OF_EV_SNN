@@ -41,7 +41,7 @@ CARLA_SCRIPTS_ROOT="${CARLA_SCRIPTS_ROOT:-../CARLA-hpc-scripts}"
 export CARLA_SCRIPTS_ROOT
 
 [ -d "${CAPTURE}/tensors" ] || {
-  echo "no ${CAPTURE}/tensors -- run inspect_capture.py --voxelise first" >&2; exit 1; }
+  echo "no ${CAPTURE}/tensors -- run groundtruth/inspect_capture.py --voxelise first" >&2; exit 1; }
 [ -f "${MANIFEST}" ] || { echo "no manifest at ${MANIFEST}" >&2; exit 1; }
 [ -d "${CARLA_SCRIPTS_ROOT}/attack_core" ] || {
   echo "no attack_core under ${CARLA_SCRIPTS_ROOT} -- set CARLA_SCRIPTS_ROOT" >&2; exit 1; }
@@ -49,6 +49,26 @@ export CARLA_SCRIPTS_ROOT
 LINE="$(sed -n "${SLURM_ARRAY_TASK_ID}p" "${MANIFEST}")"
 [ -n "${LINE}" ] || { echo "manifest has no line ${SLURM_ARRAY_TASK_ID}" >&2; exit 1; }
 read -r OBJECTIVE SIGN ATTACK ITERS EPSILONS <<< "${LINE}"
+
+# The manifest's <attack> is "<optimiser>-<surrogate>" for everything new (sapgd-assgs,
+# sapgd-native), and the bare "pgd"/"fgsm" for the runs already on disk. Split it here so the
+# manifest stays one column and the labels keep matching the dump directories.
+OPTIMISER="${ATTACK%%-*}"
+SURROGATE="${ATTACK#*-}"
+[ "${SURROGATE}" = "${ATTACK}" ] && SURROGATE="native"
+
+# The paper's setting for SA-PGD is N = 100; a manifest that leaves ITERS at the PGD default
+# would quietly run a tenth of the attack.
+if [ "${OPTIMISER}" = "sapgd" ] && [ "${ITERS}" -lt 100 ]; then
+  echo "warning: ${ATTACK} with --iters ${ITERS}; the published setting is 100" >&2
+fi
+
+# ASSG's A is tuned per model and frozen. Passed through the environment so the manifest
+# format does not change.
+ASSG_ARGS=""
+case "${SURROGATE}" in
+  assg|assgs) ASSG_ARGS="--assg-A ${ASSG_A:?set ASSG_A for surrogate ${SURROGATE}}" ;;
+esac
 
 CLEAN="results/carla_eval/pred/of_ev_snn"
 OUT="results/attack/of_ev_snn"
@@ -83,7 +103,8 @@ python attack_carla.py \
     --capture "${CAPTURE}" \
     --objective "${OBJECTIVE}" \
     --sign "${SIGN}" \
-    --attack "${ATTACK}" \
+    --attack "${OPTIMISER}" \
+    --surrogate "${SURROGATE}" ${ASSG_ARGS} \
     --iters "${ITERS}" ${NRI} \
     --epsilons ${EPSILONS} \
     --clean-pred "${CLEAN}" \

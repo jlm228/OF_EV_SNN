@@ -49,7 +49,8 @@ def import_attack_core(path=None):
     sys.path.insert(0, root)
     import attack_core                                                    # noqa: E402
     from attack_core import band as band_mod, runner                      # noqa: E402
-    return attack_core, band_mod, runner
+    from attack_core import preflight, surrogates                         # noqa: E402
+    return attack_core, band_mod, runner, preflight, surrogates
 
 
 def build_capture_loader(capture_dir, device):
@@ -95,6 +96,21 @@ def build_capture_loader(capture_dir, device):
     return load_window, capture_id, len(files)
 
 
+def _surrogate_kwargs(args):
+    """Constructor arguments for the chosen surrogate."""
+    if args.surrogate in ("assg", "assgs"):
+        if args.assg_A is None:
+            raise SystemExit(
+                "--surrogate %s needs --assg-A. It is tuned per model and then frozen, so "
+                "there is no default: a bound in (0,1) on the atan base, or the sharpness "
+                "scale itself on the sigmoid base." % args.surrogate)
+        return {"A": args.assg_A, "gamma": args.assg_gamma,
+                "beta1": args.assg_betas[0], "beta2": args.assg_betas[1]}
+    if args.surrogate == "pdsg":
+        return {"mode": args.pdsg_mode, "channel_dim": args.pdsg_channel_dim}
+    return {}
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -105,7 +121,28 @@ def main():
                     help="div only: suppress reads tau LONG, inflate reads it SHORT. 'none' is "
                          "the placeholder the sweep manifest carries for objectives that have "
                          "no direction, and is ignored unless --objective is div")
-    ap.add_argument("--attack", default="pgd", choices=["fgsm", "pgd"])
+    ap.add_argument("--attack", default="pgd", choices=["fgsm", "pgd", "sapgd"])
+    ap.add_argument("--surrogate", default="native",
+                    choices=["native", "pdsg", "assg", "assgs"],
+                    help="gradient substitute during the attack. assg is the Atan base, assgs "
+                         "the sigmoid one, which is this model's own family (native Sigmoid, "
+                         "alpha=4)")
+    ap.add_argument("--assg-A", type=float, default=None,
+                    help="ASSG sharpness setting. A bound in (0,1) on the atan base; the "
+                         "sharpness scale itself on the sigmoid base. Required for assg/assgs")
+    ap.add_argument("--assg-gamma", type=float, default=1.5)
+    ap.add_argument("--assg-betas", type=float, nargs=2, default=(0.9, 0.9),
+                    metavar=("BETA1", "BETA2"))
+    ap.add_argument("--pdsg-mode", default="channel", choices=["channel", "layer"])
+    ap.add_argument("--pdsg-channel-dim", type=int, default=1,
+                    help="the polarity axis of (B, 2, T, H, W) after the batch axis")
+    ap.add_argument("--rhos", type=float, nargs="+", default=None,
+                    help="the rho each epsilon was calibrated from, recorded in the reports")
+    ap.add_argument("--scene-mass", type=float, default=None,
+                    help="events per window, so realised rho can be reported")
+    ap.add_argument("--preflight", action="store_true",
+                    help="measure swap coverage, mean |u| per spiking layer, timing and peak "
+                         "memory on one window, then exit without attacking")
     ap.add_argument("--epsilons", type=float, nargs="+", required=True,
                     help="one run covers the whole ramp: the clean forward is computed once "
                          "per window and reused across every epsilon")
@@ -119,9 +156,9 @@ def main():
     ap.add_argument("--band-hi", type=int, default=None)
     ap.add_argument("--band-json", default=None,
                     help="default: <capture>/attack_band.json, from attack_core.band")
-    ap.add_argument("--clean-pred", required=True,
+    ap.add_argument("--clean-pred", default=None,
                     help="clean prediction dump; every output directory is seeded from it")
-    ap.add_argument("--out", required=True, help="root for the attacked dumps")
+    ap.add_argument("--out", default=None, help="root for the attacked dumps")
     ap.add_argument("--report", default=None, help="default: <out>/reports")
     ap.add_argument("--dump-adv-tensors", default=None,
                     help="also write the perturbed INPUT tensors, for the Stage 6 transfer "
@@ -137,12 +174,19 @@ def main():
                          ".npy and compare against what the objective reported")
     args = ap.parse_args()
 
+    # --preflight only loads the model and measures it; it writes no dumps, so it should not
+    # demand the paths a real run needs.
+    if not args.preflight:
+        for flag, value in (("--clean-pred", args.clean_pred), ("--out", args.out)):
+            if value is None:
+                ap.error("%s is required unless --preflight" % flag)
+
     # The manifest carries "none" for objectives with no direction; the objective builder
     # only accepts a real sign, and ignores it for everything but div.
     if args.sign == "none":
         args.sign = "suppress"
 
-    _core, band_mod, runner = import_attack_core(args.carla_scripts)
+    _core, band_mod, runner, preflight, surrogates = import_attack_core(args.carla_scripts)
 
     if args.round_trip:
         from attack_core.reference import round_trip
@@ -187,31 +231,70 @@ def main():
         model.reset_state()
         return model.forward(x)
 
+    # This model's sample is (1, 2, 21, H, W): positions 0-9 are the last 10 bins of window
+    # i-1 and 10-20 are window i's own 11 bins, so consecutive samples share 10 bins. Attacking
+    # each independently would put two different perturbations on the same bin.
+    bin_layout = runner.BinLayout(axis=2, own=slice(10, 21),
+                                  inherit_from=slice(11, 21), inherit_to=slice(0, 10))
+
+    # `pool` is an IFNode with V_th = inf used as an integrator: its .v is read, not its spike,
+    # so its incoming gradient is 0 -- but an adaptive surrogate there gives NaN, and 0 * NaN
+    # would spread NaN over the whole input gradient.
+    factory = surrogates.build_surrogate_factory(args.surrogate, **_surrogate_kwargs(args))
+    handle = None
+    if factory is not None:
+        handle = surrogates.swap_surrogates(model.net, factory=factory, skip=("pool",))
+        cov = handle.coverage
+        print("surrogate %s on %d of %d spiking modules (skipped: %s)"
+              % (args.surrogate, cov["n_swapped"], cov["n_candidates"],
+                 ", ".join(cov["skipped"]) or "none"))
+
+    if args.preflight:
+        try:
+            first = load_window(lo)
+            if first is None:
+                raise SystemExit("window %d is not in this capture" % lo)
+            preflight.report(model.net, forward_eval, first[0], native_alpha=4.0,
+                             skip=("pool",), device=str(device))
+        finally:
+            if handle is not None:
+                surrogates.restore_surrogates(handle)
+        raise SystemExit(0)
+
     control = build_attack("random_sign", epsilon=args.epsilons[0], seed=args.seed)
 
     def random_sign_fn(x, eps, seed):
         control.epsilon = eps
         return control(x)
 
+    label = runner.attack_label(args.attack, args.surrogate)
     print("of_ev_snn | objective %s%s | attack %s | band [%d, %d] of %d windows"
           % (args.objective, "/" + args.sign if args.objective == "div" else "",
-             args.attack, lo, hi, n_windows))
+             label, lo, hi, n_windows))
     print("epsilons: %s" % " ".join("%g" % e for e in args.epsilons))
 
-    reports, _dirs = runner.run_sweep(
-        band=(lo, hi), load_window=load_window,
-        forward_grad=model.forward_grad, forward_eval=forward_eval,
-        epe_fn=mod_loss_function,
-        objective=args.objective, sign=args.sign, attack=args.attack,
-        epsilons=args.epsilons, iters=args.iters, alpha=args.alpha, seed=args.seed,
-        clean_pred_dir=args.clean_pred, out_root=args.out, capture_id=capture_id,
-        model_name="of_ev_snn",
-        # Event counts cannot be negative. There is no upper clamp: the count tensor is
-        # unbounded above, and capping it would be an event-consistency constraint, not an
-        # L-infinity one.
-        clip_min=0.0, clip_max=None, support_mode=args.support,
-        dump_adv_tensors=args.dump_adv_tensors,
-                        rand_init=not args.no_rand_init, random_sign_fn=random_sign_fn)
+    try:
+        reports, _dirs = runner.run_sweep(
+            band=(lo, hi), load_window=load_window,
+            forward_grad=model.forward_grad, forward_eval=forward_eval,
+            epe_fn=mod_loss_function,
+            objective=args.objective, sign=args.sign, attack=label,
+            epsilons=args.epsilons, iters=args.iters, alpha=args.alpha, seed=args.seed,
+            clean_pred_dir=args.clean_pred, out_root=args.out, capture_id=capture_id,
+            model_name="of_ev_snn",
+            # Event counts cannot be negative. There is no upper clamp: the count tensor is
+            # unbounded above, and capping it would be an event-consistency constraint, not an
+            # L-infinity one.
+            clip_min=0.0, clip_max=None, support_mode=args.support,
+            dump_adv_tensors=args.dump_adv_tensors,
+            bin_layout=bin_layout, surrogate_ctx=handle,
+            rhos=args.rhos, scene_mass=args.scene_mass,
+            rand_init=not args.no_rand_init, random_sign_fn=random_sign_fn)
+    finally:
+        # Must run even when the attack raises, or a failed window leaves the adaptive
+        # surrogate installed for whatever runs next in this process.
+        if handle is not None:
+            surrogates.restore_surrogates(handle)
 
     paths = runner.write_reports(reports, args.report or os.path.join(args.out, "reports"),
                                  reports[args.epsilons[0]]["label"])
