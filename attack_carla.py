@@ -112,34 +112,45 @@ def _surrogate_kwargs(args):
 
 
 def preflight_input(capture_dir, model, window):
-    """One model input for `window`, encoded from events.npy in memory.
+    """One model input for `window`, binned from events.npy in memory.
 
     The pre-flight runs before anything has been voxelised, and the pipeline deletes the voxels
-    once inference is done, so `<capture>/tensors` cannot be relied on. events.npy is the one
-    artefact that is kept, and `input_from_events` is the same encoder the voxelised path uses,
-    so the measured |u| is the |u| the attack will see.
-    """
-    from groundtruth.inspect_capture import load_capture
+    once inference is done, so `<capture>/tensors` cannot be relied on. This rebuilds the exact
+    tensor the voxelised path would hand the attack: `bin_window_events` per window, as
+    `run_voxelise` calls it, then the `concat(frame_prev, frame)[-21:]` DSECDatasetLite applies.
 
-    events, windows, _meta = load_capture(capture_dir, mmap=True)
+    It deliberately does NOT go through `input_from_events`, which splits one span at its
+    midpoint and so assumes consecutive windows are adjacent.
+    """
+    from groundtruth.inspect_capture import bin_window_events, load_capture
+
+    events, windows, meta = load_capture(capture_dir, mmap=True)
     t_starts = windows["t_start_us"].to_numpy()
     if window < 1 or window >= len(t_starts):
         raise SystemExit(
             "--preflight-window %d is out of range: this model needs window w and the one "
             "before it, so w must be in [1, %d]" % (window, len(t_starts) - 1))
-    if np.isnan(t_starts[window - 1]) or np.isnan(t_starts[window]):
-        raise SystemExit("window %d or %d recorded no events; pick another "
-                         "--preflight-window" % (window - 1, window))
 
-    window_us = int(round(model.window_ms * 1000))
-    t0 = int(t_starts[window - 1])
-    t1 = int(t_starts[window]) + window_us
-    if t1 - t0 != 2 * window_us:
-        raise SystemExit(
-            "windows %d and %d are not contiguous (%d us apart, expected %d), so they cannot "
-            "form this model's two-window input" % (window - 1, window,
-                                                    int(t_starts[window]) - t0, window_us))
-    return model.input_from_events(events, t0, t1)
+    window_us = int(round(float(meta["window_s"]) * 1e6))
+    stride = (int(t_starts[window]) - int(t_starts[window - 1])
+              if not np.isnan(t_starts[window - 1]) else None)
+    print("capture geometry: window %d us, row stride %s us%s"
+          % (window_us, stride,
+             " (windows overlap)" if stride is not None and stride < window_us else ""))
+
+    frames = []
+    for w in (window - 1, window):
+        if np.isnan(t_starts[w]):
+            raise SystemExit("window %d recorded no events; pick another "
+                             "--preflight-window" % w)
+        t0 = int(t_starts[w])
+        frames.append(bin_window_events(events["x"], events["y"], events["t"], events["pol"],
+                                        t0, t0 + window_us, num_bins=model.num_bins,
+                                        height=model.height, width=model.width))
+
+    # [-21:] as DSECDatasetLite does: 10 bins of the previous window, then this window's 11.
+    chunk = np.concatenate(frames, axis=0)[-21:]
+    return torch.transpose(torch.from_numpy(chunk).unsqueeze(0), 1, 2)
 
 
 def main():
