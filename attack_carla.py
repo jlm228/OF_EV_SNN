@@ -111,6 +111,37 @@ def _surrogate_kwargs(args):
     return {}
 
 
+def preflight_input(capture_dir, model, window):
+    """One model input for `window`, encoded from events.npy in memory.
+
+    The pre-flight runs before anything has been voxelised, and the pipeline deletes the voxels
+    once inference is done, so `<capture>/tensors` cannot be relied on. events.npy is the one
+    artefact that is kept, and `input_from_events` is the same encoder the voxelised path uses,
+    so the measured |u| is the |u| the attack will see.
+    """
+    from groundtruth.inspect_capture import load_capture
+
+    events, windows, _meta = load_capture(capture_dir, mmap=True)
+    t_starts = windows["t_start_us"].to_numpy()
+    if window < 1 or window >= len(t_starts):
+        raise SystemExit(
+            "--preflight-window %d is out of range: this model needs window w and the one "
+            "before it, so w must be in [1, %d]" % (window, len(t_starts) - 1))
+    if np.isnan(t_starts[window - 1]) or np.isnan(t_starts[window]):
+        raise SystemExit("window %d or %d recorded no events; pick another "
+                         "--preflight-window" % (window - 1, window))
+
+    window_us = int(round(model.window_ms * 1000))
+    t0 = int(t_starts[window - 1])
+    t1 = int(t_starts[window]) + window_us
+    if t1 - t0 != 2 * window_us:
+        raise SystemExit(
+            "windows %d and %d are not contiguous (%d us apart, expected %d), so they cannot "
+            "form this model's two-window input" % (window - 1, window,
+                                                    int(t_starts[window]) - t0, window_us))
+    return model.input_from_events(events, t0, t1)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -140,6 +171,8 @@ def main():
                     help="the rho each epsilon was calibrated from, recorded in the reports")
     ap.add_argument("--scene-mass", type=float, default=None,
                     help="events per window, so realised rho can be reported")
+    ap.add_argument("--preflight-window", type=int, default=None,
+                    help="window to measure on; default: the band's first, or 1")
     ap.add_argument("--preflight", action="store_true",
                     help="measure swap coverage, mean |u| per spiking layer, timing and peak "
                          "memory on one window, then exit without attacking")
@@ -206,19 +239,30 @@ def main():
 
     device = torch.device(args.device) if args.device else (
         torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu"))
-    load_window, capture_id, n_windows = build_capture_loader(args.capture, device)
-    capture_id = args.capture_id or capture_id
+    # The pre-flight encodes its own window from events.npy, so it must not go through
+    # the voxelised dataset: those tensors are written for inference and deleted
+    # afterwards, and the pre-flight is meant to run before any of that.
+    if args.preflight:
+        load_window, capture_id, n_windows = None, args.capture_id or 'preflight', 0
+    else:
+        load_window, capture_id, n_windows = build_capture_loader(args.capture, device)
+        capture_id = args.capture_id or capture_id
 
     if args.band_lo is not None and args.band_hi is not None:
         lo, hi = args.band_lo, args.band_hi
     else:
         path = args.band_json or os.path.join(args.capture, "attack_band.json")
-        if not os.path.exists(path):
+        if os.path.exists(path):
+            lo, hi, _meta = band_mod.read(path)
+        elif args.preflight:
+            # Measuring needs a window, not the band: any window with a predecessor
+            # will do, and --preflight-window overrides this.
+            lo, hi = 1, 1
+        else:
             raise SystemExit(
                 "no band at %s. Compute it once, in an environment with avoidance's "
                 "dependencies:\n  python -m attack_core.band --capture %s"
                 % (path, args.capture))
-        lo, hi, _meta = band_mod.read(path)
 
     model = OfEvSnnAdapter(checkpoint_path=args.checkpoint,
                            multiply_factor=args.multiply_factor, device=str(device))
@@ -251,11 +295,16 @@ def main():
 
     if args.preflight:
         try:
-            first = load_window(lo)
-            if first is None:
-                raise SystemExit("window %d is not in this capture" % lo)
-            preflight.report(model.net, forward_eval, first[0], native_alpha=4.0,
-                             skip=("pool",), device=str(device))
+            w = args.preflight_window if args.preflight_window is not None else max(lo, 1)
+            x = preflight_input(args.capture, model, w).to(device)
+            print("preflight on window %d, input %s" % (w, tuple(x.shape)))
+            # forward_grad, not forward_eval: the latter is wrapped in no_grad, so there would
+            # be nothing to differentiate and the forward+backward timing -- the number that
+            # sets EPS_CHUNK -- would be skipped. A plain squared mean stands in for the real
+            # objective, whose own cost is negligible beside the network's.
+            preflight.report(model.net, model.forward_grad, x,
+                             loss_fn=lambda f: (f ** 2).mean(),
+                             native_alpha=4.0, skip=("pool",), device=str(device))
         finally:
             if handle is not None:
                 surrogates.restore_surrogates(handle)
