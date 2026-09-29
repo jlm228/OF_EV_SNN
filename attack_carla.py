@@ -163,7 +163,7 @@ def main():
                     help="div only: suppress reads tau LONG, inflate reads it SHORT. 'none' is "
                          "the placeholder the sweep manifest carries for objectives that have "
                          "no direction, and is ignored unless --objective is div")
-    ap.add_argument("--attack", default="pgd", choices=["fgsm", "pgd", "sapgd"])
+    ap.add_argument("--attack", default="pgd", choices=["fgsm", "pgd", "sapgd", "sda"])
     ap.add_argument("--surrogate", default="native",
                     choices=["native", "pdsg", "assg", "assgs"],
                     help="gradient substitute during the attack. assg is the Atan base, assgs "
@@ -178,6 +178,22 @@ def main():
     ap.add_argument("--pdsg-mode", default="channel", choices=["channel", "layer"])
     ap.add_argument("--pdsg-channel-dim", type=int, default=1,
                     help="the polarity axis of (B, 2, T, H, W) after the batch axis")
+    ap.add_argument("--sda-tau-factors", type=float, nargs="+", default=None,
+                    help="target mode: how far the planner must be made to misread tau. "
+                         "suppress drives div to div_clean/f, inflate to f*div_clean")
+    ap.add_argument("--sda-budgets", type=float, nargs="+", default=None,
+                    help="budget mode: events per window, from calibrate --events")
+    ap.add_argument("--sda-epe-margin", type=float, default=None,
+                    help="target mode with --objective epe_masked: extra masked EPE, in pixels")
+    ap.add_argument("--sda-directions", default="inject_only",
+                    choices=["inject_only", "inject_remove"])
+    ap.add_argument("--sda-k-init", type=int, default=10,
+                    help="candidates tested per round grow as (n+1)*k_init; the search width, "
+                         "not the target")
+    ap.add_argument("--sda-iters", type=int, default=500)
+    ap.add_argument("--sda-fd-batch", type=int, default=64)
+    ap.add_argument("--sda-rank", default="grad", choices=["grad", "random"],
+                    help="random is the gradient-free control at matched event mass")
     ap.add_argument("--rhos", type=float, nargs="+", default=None,
                     help="the rho each epsilon was calibrated from, recorded in the reports")
     ap.add_argument("--scene-mass", type=float, default=None,
@@ -187,7 +203,7 @@ def main():
     ap.add_argument("--preflight", action="store_true",
                     help="measure swap coverage, mean |u| per spiking layer, timing and peak "
                          "memory on one window, then exit without attacking")
-    ap.add_argument("--epsilons", type=float, nargs="+", required=True,
+    ap.add_argument("--epsilons", type=float, nargs="+", default=None,
                     help="one run covers the whole ramp: the clean forward is computed once "
                          "per window and reused across every epsilon")
     ap.add_argument("--iters", type=int, default=10)
@@ -220,6 +236,14 @@ def main():
 
     # --preflight only loads the model and measures it; it writes no dumps, so it should not
     # demand the paths a real run needs.
+    if args.attack == "sda":
+        # SDA has no epsilon: its levels are tau factors or event budgets.
+        if (args.sda_tau_factors is None) == (args.sda_budgets is None):
+            ap.error("--attack sda needs exactly one of --sda-tau-factors "
+                     "(target mode) or --sda-budgets (budget mode)")
+    elif not args.preflight and args.epsilons is None:
+        ap.error("--epsilons is required unless --attack sda or --preflight")
+
     if not args.preflight:
         for flag, value in (("--clean-pred", args.clean_pred), ("--out", args.out)):
             if value is None:
@@ -313,9 +337,12 @@ def main():
             # be nothing to differentiate and the forward+backward timing -- the number that
             # sets EPS_CHUNK -- would be skipped. A plain squared mean stands in for the real
             # objective, whose own cost is negligible beside the network's.
+            # base="sigmoid": this model's native family, and the one whose omega is a raw
+            # scale that has to be anchored to the measured E|u|.
             preflight.report(model.net, model.forward_grad, x,
                              loss_fn=lambda f: (f ** 2).mean(),
-                             native_alpha=4.0, skip=("pool",), device=str(device))
+                             native_alpha=4.0, base="sigmoid", skip=("pool",),
+                             device=str(device))
         finally:
             if handle is not None:
                 surrogates.restore_surrogates(handle)
@@ -334,7 +361,23 @@ def main():
     print("epsilons: %s" % " ".join("%g" % e for e in args.epsilons))
 
     try:
-        reports, _dirs = runner.run_sweep(
+        if args.attack == "sda":
+            reports, _dirs = runner.run_sweep_sda(
+                band=(lo, hi), load_window=load_window,
+                forward_grad=model.forward_grad, forward_eval=forward_eval,
+                epe_fn=mod_loss_function,
+                objective=args.objective, sign=args.sign, attack=label, seed=args.seed,
+                clean_pred_dir=args.clean_pred, out_root=args.out, capture_id=capture_id,
+                model_name="of_ev_snn",
+                tau_factors=args.sda_tau_factors, budgets=args.sda_budgets,
+                epe_margin=args.sda_epe_margin,
+                domain='count', directions=args.sda_directions,
+                support_mode=args.support, k_init=args.sda_k_init, iters=args.sda_iters,
+                fd_batch=args.sda_fd_batch, rank=args.sda_rank,
+                bin_layout=bin_layout, surrogate_ctx=handle, scene_mass=args.scene_mass,
+                dump_adv_tensors=args.dump_adv_tensors, verbose=True)
+        else:
+            reports, _dirs = runner.run_sweep(
             band=(lo, hi), load_window=load_window,
             forward_grad=model.forward_grad, forward_eval=forward_eval,
             epe_fn=mod_loss_function,

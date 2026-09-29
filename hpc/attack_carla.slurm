@@ -86,6 +86,27 @@ if [ "${RAND_INIT:-1}" = "0" ]; then
   LABEL="${LABEL}_nri"
 fi
 
+# SDA has no epsilon: the manifest's last column carries tau factors (target mode, the core
+# matrix) or event budgets from `calibrate --events` (budget mode). SDA_MODE picks which, and
+# ITERS is SDA's N rather than a step count.
+SDA_ARGS=""
+if [ "${OPTIMISER}" = "sda" ]; then
+  case "${SDA_MODE:-target}" in
+    target) SDA_ARGS="--sda-tau-factors ${EPSILONS}" ;;
+    budget) SDA_ARGS="--sda-budgets ${EPSILONS}" ;;
+    *) echo "SDA_MODE must be target or budget, got '${SDA_MODE}'" >&2; exit 1 ;;
+  esac
+  SDA_ARGS="${SDA_ARGS} --sda-iters ${ITERS}"
+  SDA_ARGS="${SDA_ARGS} --sda-directions ${SDA_DIRECTIONS:-inject_only}"
+  SDA_ARGS="${SDA_ARGS} --sda-rank ${SDA_RANK:-grad}"
+  [ -n "${SDA_K_INIT:-}" ] && SDA_ARGS="${SDA_ARGS} --sda-k-init ${SDA_K_INIT}"
+  [ -n "${SDA_FD_BATCH:-}" ] && SDA_ARGS="${SDA_ARGS} --sda-fd-batch ${SDA_FD_BATCH}"
+  [ -n "${SDA_EPE_MARGIN:-}" ] && SDA_ARGS="${SDA_ARGS} --sda-epe-margin ${SDA_EPE_MARGIN}"
+  LEVEL_ARGS="${SDA_ARGS}"
+else
+  LEVEL_ARGS="--iters ${ITERS} ${NRI} --epsilons ${EPSILONS}"
+fi
+
 [ -d "${CLEAN}" ] || {
   echo "no clean predictions at ${CLEAN} -- run hpc/carla_eval.slurm first; every attacked" >&2
   echo "output directory is SEEDED from it, so a band-limited attack has no gaps" >&2
@@ -105,8 +126,7 @@ python attack_carla.py \
     --sign "${SIGN}" \
     --attack "${OPTIMISER}" \
     --surrogate "${SURROGATE}" ${ASSG_ARGS} \
-    --iters "${ITERS}" ${NRI} \
-    --epsilons ${EPSILONS} \
+    ${LEVEL_ARGS} \
     --clean-pred "${CLEAN}" \
     --out "${OUT}" \
     --report "${OUT}/reports"
