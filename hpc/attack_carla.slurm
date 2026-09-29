@@ -42,6 +42,25 @@ export CARLA_SCRIPTS_ROOT
 
 [ -d "${CAPTURE}/tensors" ] || {
   echo "no ${CAPTURE}/tensors -- run groundtruth/inspect_capture.py --voxelise first" >&2; exit 1; }
+
+# Build the tensors if they are not there, exactly as carla_eval.slurm does. Captures ship
+# without them: they are the bulk of a capture's size and regenerable from its raw events. Any
+# sequence list means a previous conversion finished, whatever prefix it used.
+CAP_ABS="$(cd "${CAPTURE}" && pwd)"
+mkdir -p "${CAP_ABS}/tensors"
+(
+  flock 9
+  if [ -n "$(find "${CAP_ABS}/tensors/sequence_lists" -name '*.csv' 2>/dev/null | head -1)" ]; then
+    echo "tensors already present at ${CAP_ABS}/tensors -- skipping conversion"
+  else
+    echo "converting ${CAP_ABS} to the OF_EV_SNN layout"
+    ( cd "${CARLA_SCRIPTS_ROOT}" && python groundtruth/inspect_capture.py "${CAP_ABS}" \
+        --voxelise --out "${CAP_ABS}/tensors" --capture-id "carla_$(basename "${CAP_ABS}")" )
+  fi
+) 9>"${CAP_ABS}/tensors.lock"
+
+[ -n "$(find "${CAP_ABS}/tensors/sequence_lists" -name '*.csv' 2>/dev/null | head -1)" ] || {
+  echo "conversion did not produce a sequence list under ${CAP_ABS}/tensors" >&2; exit 1; }
 [ -f "${MANIFEST}" ] || { echo "no manifest at ${MANIFEST}" >&2; exit 1; }
 [ -d "${CARLA_SCRIPTS_ROOT}/attack_core" ] || {
   echo "no attack_core under ${CARLA_SCRIPTS_ROOT} -- set CARLA_SCRIPTS_ROOT" >&2; exit 1; }

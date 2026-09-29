@@ -176,6 +176,18 @@ echo "attack array : job ${ARRAY_ID} (1-${N})"
 SCORE_ID=$(sbatch --parsable --dependency=afterany:"${ARRAY_ID}" \
     hpc/score_attack.slurm "${CAPTURE}")
 echo "score+figures: job ${SCORE_ID} (after ${ARRAY_ID})"
+
+# The tensors are derived data and the bulk of a capture's size. Cleanup cannot live in the
+# array task: several tasks read the same tensors at once. afterany on the ARRAY, not on the
+# scoring job, because score_attack.slurm reads predictions and needs no tensors.
+# KEEP_TENSORS=1 leaves them for a follow-up sweep.
+if [ "${KEEP_TENSORS:-0}" != "1" ]; then
+  RM_ID=$(sbatch --parsable --dependency=afterany:"${ARRAY_ID}" \
+      --job-name=of_ev_snn_tensors_rm --time=00:15:00 --mem=2G --ntasks=1 \
+      --output=hpc/logs/%x_%j.out \
+      --wrap="rm -rf '$(cd "${CAPTURE}" && pwd)/tensors' '$(cd "${CAPTURE}" && pwd)/tensors.lock'")
+  echo "tensor cleanup: job ${RM_ID} (after ${ARRAY_ID}); KEEP_TENSORS=1 to skip"
+fi
 echo
 echo "Watch with: squeue --me"
 echo "A failed objective reruns alone:  sbatch --array=<index> hpc/attack_carla.slurm ${CAPTURE} ${MANIFEST}"
