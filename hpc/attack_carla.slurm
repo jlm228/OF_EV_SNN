@@ -40,9 +40,6 @@ MANIFEST="${2:?${USAGE}}"
 CARLA_SCRIPTS_ROOT="${CARLA_SCRIPTS_ROOT:-../CARLA-hpc-scripts}"
 export CARLA_SCRIPTS_ROOT
 
-[ -d "${CAPTURE}/tensors" ] || {
-  echo "no ${CAPTURE}/tensors -- run groundtruth/inspect_capture.py --voxelise first" >&2; exit 1; }
-
 # Build the tensors if they are not there, exactly as carla_eval.slurm does. Captures ship
 # without them: they are the bulk of a capture's size and regenerable from its raw events. Any
 # sequence list means a previous conversion finished, whatever prefix it used.
