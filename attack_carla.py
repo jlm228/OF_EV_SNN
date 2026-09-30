@@ -216,6 +216,9 @@ def main():
     ap.add_argument("--no-rand-init", action="store_true",
                     help="start PGD at the clean input, not a random point in the ball")
     ap.add_argument("--seed", type=int, default=2305)
+    ap.add_argument("--dry-run", action="store_true",
+                    help="validate arguments, band, tensors, checkpoint and surrogate "
+                         "swap, then exit without attacking")
     ap.add_argument("--support", default="all", choices=["all", "nonzero"])
     ap.add_argument("--band-lo", type=int, default=None)
     ap.add_argument("--band-hi", type=int, default=None)
@@ -366,17 +369,41 @@ def main():
             return fn(*args, **kwargs)
         return wrapped
 
-    control = build_attack("random_sign", epsilon=args.epsilons[0], seed=args.seed)
+    # SDA has no epsilon, so the epsilon-ball control neither applies nor can be
+    # built; run_sweep_sda never asks for it.
+    random_sign_fn = None
+    if args.epsilons:
+        control = build_attack("random_sign", epsilon=args.epsilons[0],
+                               seed=args.seed)
 
-    def random_sign_fn(x, eps, seed):
-        control.epsilon = eps
-        return control(x)
+        def random_sign_fn(x, eps, seed):
+            control.epsilon = eps
+            return control(x)
 
     label = runner.attack_label(args.attack, args.surrogate)
     print("of_ev_snn | objective %s%s | attack %s | band [%d, %d] of %d windows"
           % (args.objective, "/" + args.sign if args.objective == "div" else "",
              label, lo, hi, n_windows))
-    print("epsilons: %s" % " ".join("%g" % e for e in args.epsilons))
+    # The levels this run sweeps, in whichever units the attack uses: SDA has no epsilon,
+    # so its reports are keyed by tau factor or event budget instead. Everything below
+    # reads the list from here rather than assuming epsilons.
+    if args.attack == "sda":
+        levels = args.sda_tau_factors or args.sda_budgets
+        level_name = "tau factors" if args.sda_tau_factors else "event budgets"
+    else:
+        levels = args.epsilons
+        level_name = "epsilons"
+    print("%s: %s" % (level_name, " ".join("%g" % v for v in levels)))
+
+    if args.dry_run:
+        # Everything above is setup a real run shares: arguments, the band, the tensors,
+        # the checkpoint and the surrogate swap. Checking it here costs seconds on a login
+        # node, rather than a GPU queue wait to discover a bad argument.
+        print("dry run: setup OK, %d level(s) over band [%d, %d]"
+              % (len(levels), lo, hi))
+        if handle is not None:
+            surrogates.restore_surrogates(handle)
+        raise SystemExit(0)
 
     try:
         if args.attack == "sda":
@@ -421,10 +448,10 @@ def main():
             surrogates.restore_surrogates(handle)
 
     paths = runner.write_reports(reports, args.report or os.path.join(args.out, "reports"),
-                                 reports[args.epsilons[0]]["label"])
+                                 reports[levels[0]]["label"])
     print("\nreports:")
-    for eps in args.epsilons:
-        print("  %s" % paths[eps])
+    for level in levels:
+        print("  %s" % paths[level])
 
 
 if __name__ == "__main__":
