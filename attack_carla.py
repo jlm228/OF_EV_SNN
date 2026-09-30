@@ -348,6 +348,19 @@ def main():
                 surrogates.restore_surrogates(handle)
         raise SystemExit(0)
 
+
+    # Every forward pass must tell the surrogate it is a new pass, or ASSG's per-time-step
+    # moment index keeps climbing: each pass writes to a fresh (M, D) starting at (1, 0), so the
+    # sharpness never adapts and the moments grow without bound.
+    def with_begin_forward(fn):
+        if handle is None:
+            return fn
+
+        def wrapped(*args, **kwargs):
+            handle.begin_forward()
+            return fn(*args, **kwargs)
+        return wrapped
+
     control = build_attack("random_sign", epsilon=args.epsilons[0], seed=args.seed)
 
     def random_sign_fn(x, eps, seed):
@@ -364,7 +377,8 @@ def main():
         if args.attack == "sda":
             reports, _dirs = runner.run_sweep_sda(
                 band=(lo, hi), load_window=load_window,
-                forward_grad=model.forward_grad, forward_eval=forward_eval,
+                forward_grad=with_begin_forward(model.forward_grad),
+            forward_eval=with_begin_forward(forward_eval),
                 epe_fn=mod_loss_function,
                 objective=args.objective, sign=args.sign, attack=label, seed=args.seed,
                 clean_pred_dir=args.clean_pred, out_root=args.out, capture_id=capture_id,
@@ -379,7 +393,8 @@ def main():
         else:
             reports, _dirs = runner.run_sweep(
             band=(lo, hi), load_window=load_window,
-            forward_grad=model.forward_grad, forward_eval=forward_eval,
+            forward_grad=with_begin_forward(model.forward_grad),
+            forward_eval=with_begin_forward(forward_eval),
             epe_fn=mod_loss_function,
             objective=args.objective, sign=args.sign, attack=label,
             epsilons=args.epsilons, iters=args.iters, alpha=args.alpha, seed=args.seed,
