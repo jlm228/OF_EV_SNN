@@ -26,7 +26,7 @@ sys.path.insert(0, os.path.abspath(CARLA_SCRIPTS_ROOT))
 
 from snnmetrics.probe import SpikeProbe                      # noqa: E402
 from snnmetrics.cost import (footprint_bytes, connection_sparsity,   # noqa: E402
-                             write_csvs)
+                             wall_stats, write_csvs)
 
 FRAMES = 21
 RESOLUTION = (480, 640)
@@ -124,7 +124,7 @@ def main():
             probe.mark_window()
             print("  window %d/%d  %.2f s" % (i + 1, args.windows, wall[-1]), flush=True)
 
-    static["wall_ms_per_window"] = 1000.0 * sum(wall) / len(wall)
+    static.update(wall_stats(wall))
     os.makedirs(args.out, exist_ok=True)
     records_path = probe.dump(os.path.join(args.out, "%s_spikes.json" % args.name), meta=static)
 
