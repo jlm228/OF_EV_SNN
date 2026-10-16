@@ -28,6 +28,7 @@ CAPTURE="${1:?${USAGE}}"
 MODEL="${2:-of_ev_snn}"
 
 CARLA_SCRIPTS_ROOT="${CARLA_SCRIPTS_ROOT:-../CARLA-hpc-scripts}"
+REDO="${REDO:-0}" # REDO=1    re-score the controls and clean anchor already present (default: skip)
 CAP_ABS="$(cd "${CAPTURE}" && pwd)"
 SCEN="$(basename "${CAP_ABS}")"
 REPO="$(pwd)"   # already cd'd to SLURM_SUBMIT_DIR; $0 is Slurm's spooled copy
@@ -49,7 +50,7 @@ mkdir -p "${RES}/reports"
 # without no_action (it supplies the recorded path), sweep.py refuses without gt_oracle (it is
 # what deviation is measured against), and without the floor a non-collision means nothing.
 for COND in no_action gt_oracle; do
-    if [ ! -f "${RES}/${SCEN}_none_${COND}.json" ]; then
+    if [ "${REDO}" = "1" ] || [ ! -f "${RES}/${SCEN}_none_${COND}.json" ]; then
         echo "=== control: ${COND} ==="
         python -m avoidance.eval.run_case --capture "${CAP_ABS}" --model none \
             --condition "${COND}" --out "${RES}"
@@ -62,7 +63,7 @@ if [ ! -d "${CLEAN_PRED}" ]; then
     echo "         Without them there is no epsilon-0 anchor, so every pair figure and the"
     echo "         whole grid will be empty. Run hpc/carla_eval.slurm for this capture."
 fi
-if [ -d "${CLEAN_PRED}" ] && [ ! -f "${RES}/${SCEN}_${MODEL}_clean.json" ]; then
+if [ -d "${CLEAN_PRED}" ] && { [ "${REDO}" = "1" ] || [ ! -f "${RES}/${SCEN}_${MODEL}_clean.json" ]; }; then
     echo "=== clean anchor: ${MODEL} ==="
     python -m avoidance.eval.run_case --capture "${CAP_ABS}" --model "${MODEL}" \
         --condition clean --pred "${CLEAN_PRED}" --capture-id "${CAPTURE_ID}" --out "${RES}"
