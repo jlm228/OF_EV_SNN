@@ -6,9 +6,9 @@
 #       bash hpc/submit_all_captures.sh ../CARLA-hpc-scripts/captures/135_scenarios
 #   LIMIT=5 DRY_RUN=1 bash hpc/submit_all_captures.sh <captures_dir>    # see what it would do
 #
-# submit_attack_sweep.sh handles ONE capture and CLEARS results/attack/of_ev_snn on the way in,
-# so calling it in a loop directly would leave only the last capture's cells. This clears once,
-# then passes KEEP_PREVIOUS=1 to every call.
+# submit_attack_sweep.sh handles ONE capture. With CLEAR_PREVIOUS=1 this clears
+# results/attack/of_ev_snn once, before the loop, and never per capture; by default nothing is
+# cleared.
 #
 # SDA needs a per-capture target: the tau factor at which that capture's outcome tier changes,
 # from a tau_probe record. A capture the probe never moved has no meaningful target, so it is
@@ -52,10 +52,10 @@ echo "attack     ${ATTACK}"
 [ "${OPTIMISER}" = "sda" ] && echo "targets    ${TAU_PROBE}"
 echo
 
-# Clear ONCE, before the loop, for the same reason submit_attack_sweep.sh clears: a previous
-# sweep with a different ramp leaves cells behind that everything downstream would score too.
-if [ "${KEEP_PREVIOUS:-0}" = "0" ] && [ "${DRY_RUN}" = "0" ]; then
-  echo "clearing results/attack/of_ev_snn (KEEP_PREVIOUS=1 to append)"
+# Cleared ONCE, before the loop, and only on request: a previous sweep with a different ramp
+# leaves cells behind that everything downstream would score too.
+if [ "${CLEAR_PREVIOUS:-0}" = "1" ] && [ "${DRY_RUN}" = "0" ]; then
+  echo "clearing results/attack/of_ev_snn (CLEAR_PREVIOUS=1)"
   rm -rf results/attack/of_ev_snn
 fi
 mkdir -p results/attack/of_ev_snn
@@ -92,7 +92,7 @@ for CAP in "${DIRS[@]}"; do
   echo "=== ${ID}${LEVELS:+ (tau ${LEVELS})} ===" | tee -a "${LOG}"
   # export, not an env-var prefix: a prefix would word-split a multi-value level list.
   [ -n "${LEVELS}" ] && export SDA_LEVELS="${LEVELS}"
-  KEEP_PREVIOUS=1 ATTACK="${ATTACK}" \
+  CLEAR_PREVIOUS=0 ATTACK="${ATTACK}" \
     bash hpc/submit_attack_sweep.sh "${CAP}" 2>&1 | tee -a "${LOG}"
   SUBMITTED=$((SUBMITTED + 1))
 

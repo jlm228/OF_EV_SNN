@@ -48,10 +48,10 @@ else
 fi
 
 
-# A sweep owns its output directory. Budgets are keyed by value, so a later sweep with a
-# different ramp leaves the previous one's cells behind and everything downstream scores both.
-# KEEP_PREVIOUS=1 to append instead.
-if [ "${KEEP_PREVIOUS:-0}" = "0" ]; then
+# Budgets are keyed by value, so a later sweep with a different ramp leaves the previous one's
+# cells behind and everything downstream scores both. CLEAR_PREVIOUS=1 deletes the previous
+# sweep's cells first; by default they are kept.
+if [ "${CLEAR_PREVIOUS:-0}" = "1" ]; then
   for D in results/attack/of_ev_snn; do
     [ -d "${D}" ] && { echo "clearing ${D}"; rm -rf "${D}"; }
   done
