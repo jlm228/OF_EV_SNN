@@ -6,7 +6,7 @@
 # Chained behind the attack array by submit_attack_sweep.sh. CPU only -- scoring is seconds per
 # case and needs no GPU, so this must not sit in the GPU queue.
 #
-# The avoidance package is model-free (numpy/pandas/cv2, no torch), so it runs in this repo's
+# The av_model package is model-free (numpy/pandas/cv2, no torch), so it runs in this repo's
 # environment and scores every model through one implementation.
 
 #SBATCH --job-name=score_attack
@@ -52,7 +52,7 @@ mkdir -p "${RES}/reports"
 for COND in no_action gt_oracle; do
     if [ "${REDO}" = "1" ] || [ ! -f "${RES}/${SCEN}_none_${COND}.json" ]; then
         echo "=== control: ${COND} ==="
-        python -m avoidance.eval.run_case --capture "${CAP_ABS}" --model none \
+        python -m av_model.eval.run_case --capture "${CAP_ABS}" --model none \
             --condition "${COND}" --out "${RES}"
     fi
 done
@@ -65,7 +65,7 @@ if [ ! -d "${CLEAN_PRED}" ]; then
 fi
 if [ -d "${CLEAN_PRED}" ] && { [ "${REDO}" = "1" ] || [ ! -f "${RES}/${SCEN}_${MODEL}_clean.json" ]; }; then
     echo "=== clean anchor: ${MODEL} ==="
-    python -m avoidance.eval.run_case --capture "${CAP_ABS}" --model "${MODEL}" \
+    python -m av_model.eval.run_case --capture "${CAP_ABS}" --model "${MODEL}" \
         --condition clean --pred "${CLEAN_PRED}" --capture-id "${CAPTURE_ID}" --out "${RES}"
 fi
 
@@ -83,7 +83,7 @@ for EPS_DIR in "${ATTACK_ROOT}"/*/eps*/; do
     if [ "$(python -c "print(float('${EPS}') == 0)")" = "True" ]; then continue; fi
     NAME="${MODEL}__${OBJECTIVE}__eps${EPS}"
     echo "  ${NAME}"
-    python -m avoidance.eval.run_case --capture "${CAP_ABS}" --model "${NAME}" \
+    python -m av_model.eval.run_case --capture "${CAP_ABS}" --model "${NAME}" \
         --condition clean --pred "${EPS_DIR}" --capture-id "${CAPTURE_ID}" --out "${RES}"
 done
 
@@ -96,4 +96,4 @@ echo
 # The prediction root is the PARENT of the per-model directories: make_figures.sh walks
 # <root>/<model>/<objective>/eps<value>/ and takes each objective's eps 0 as its clean
 # reference.
-bash avoidance/viz/make_figures.sh "${RES}" "${CAP_ABS}" "${REPO}/results/attack"
+bash av_model/viz/make_figures.sh "${RES}" "${CAP_ABS}" "${REPO}/results/attack"

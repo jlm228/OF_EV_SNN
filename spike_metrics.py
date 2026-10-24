@@ -55,7 +55,7 @@ def synthetic_windows(n, density=0.03, seed=0, device="cpu"):
 
 
 def real_windows(tensors_dir, capture_id, n, device="cpu"):
-    """Voxel tensors as carla_to_voxel / inspect_capture --voxelise wrote them."""
+    """Voxel tensors as carla_to_voxel / carla_voxelise.py wrote them."""
     import numpy as np
     root = os.path.join(tensors_dir, "event_tensors", "%dframes" % (FRAMES // 2 + 1))
     if not os.path.isdir(root):

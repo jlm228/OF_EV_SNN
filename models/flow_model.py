@@ -28,7 +28,7 @@ class FlowModel(Protocol):
 
 
 def _bin_window(x, y, t, pol, t_start_us, t_end_us, num_bins, height, width):
-    """Matches CARLA-hpc-scripts/inspect_capture.py::bin_window_events and
+    """Matches carla_voxelise.py::bin_window_events and
     dsec_dataset_lite/data/event2frame.py::cumulate_spikes_into_frames exactly (verified by
     test_carla_event_binning.py)."""
     frame = np.zeros((num_bins, 2, height, width), dtype=np.float32)

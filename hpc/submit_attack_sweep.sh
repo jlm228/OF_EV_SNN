@@ -31,7 +31,7 @@ CLEAN="results/carla_eval/pred/of_ev_snn"
   echo "       sbatch hpc/carla_eval.slurm ${CAPTURE}"; exit 1; }
 [ -f "${CAPTURE}/attack_band.json" ] || {
   echo "ERROR: no ${CAPTURE}/attack_band.json."
-  echo "       Compute it once, in an environment with avoidance's dependencies:"
+  echo "       Compute it once, in an environment with av_model's dependencies:"
   echo "         cd ${CARLA_SCRIPTS_ROOT} && python -m attack_core.band --capture ${CAPTURE}"
   exit 1; }
 

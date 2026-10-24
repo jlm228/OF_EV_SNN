@@ -51,8 +51,8 @@ mkdir -p "${CAP_ABS}/tensors"
     echo "tensors already present at ${CAP_ABS}/tensors -- skipping conversion"
   else
     echo "converting ${CAP_ABS} to the OF_EV_SNN layout"
-    ( cd "${CARLA_SCRIPTS_ROOT}" && python groundtruth/inspect_capture.py "${CAP_ABS}" \
-        --voxelise --out "${CAP_ABS}/tensors" --capture-id "carla_$(basename "${CAP_ABS}")" )
+    python carla_voxelise.py "${CAP_ABS}" \
+        --out "${CAP_ABS}/tensors" --capture-id "carla_$(basename "${CAP_ABS}")"
   fi
 ) 9>"${CAP_ABS}/tensors.lock"
 
@@ -157,4 +157,4 @@ done
 [ "${RT_FAIL}" = "0" ] || { echo "round trip FAILED on at least one epsilon" >&2; exit 1; }
 
 echo
-echo "Done: ${LABEL}. Score with avoidance/eval/run_case, then avoidance.eval.sweep."
+echo "Done: ${LABEL}. Score with av_model/eval/run_case, then av_model.eval.sweep."

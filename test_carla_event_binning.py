@@ -1,4 +1,4 @@
-"""Check that inspect_capture.py's event binning matches DSEC's own preprocessing.
+"""Check that carla_voxelise.py's event binning matches DSEC's own preprocessing.
 
     python test_carla_event_binning.py
 
@@ -12,8 +12,8 @@ import sys
 
 import numpy as np
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "CARLA-hpc-scripts"))
-from inspect_capture import bin_window_events  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from carla_voxelise import bin_window_events  # noqa: E402
 
 from dsec_dataset_lite.data.event2frame import EventSlicer  # noqa: E402
 import h5py  # noqa: E402

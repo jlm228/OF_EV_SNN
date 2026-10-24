@@ -9,7 +9,7 @@ SDformerFlow, so "the same attack across three models" is true by construction. 
 only the model-specific half: the capture loader, the adapter, and the epsilon budget's units.
 
 Attacked predictions are dumped in the same (2,H,W) float32 layout as clean ones, so nothing in
-`avoidance/` changes -- point `run_case --pred` at the output directory.
+`av_model/` changes -- point `run_case --pred` at the output directory.
 
 Epsilon is applied to the RAW ON/OFF event-count tensor, clamped non-negative. One unit means
 "add one event to every pixel, in every polarity channel, in every time bin".
@@ -122,7 +122,8 @@ def preflight_input(capture_dir, model, window):
     It deliberately does NOT go through `input_from_events`, which splits one span at its
     midpoint and so assumes consecutive windows are adjacent.
     """
-    from groundtruth.inspect_capture import bin_window_events, load_capture
+    from capture.groundtruth.inspect_capture import load_capture
+    from carla_voxelise import bin_window_events
 
     events, windows, meta = load_capture(capture_dir, mmap=True)
     t_starts = windows["t_start_us"].to_numpy()
@@ -303,7 +304,7 @@ def main():
             lo, hi = 1, 1
         else:
             raise SystemExit(
-                "no band at %s. Compute it once, in an environment with avoidance's "
+                "no band at %s. Compute it once, in an environment with av_model's "
                 "dependencies:\n  python -m attack_core.band --capture %s"
                 % (path, args.capture))
 

@@ -50,15 +50,15 @@ else
     CAP_ABS="$(cd "${CAPTURE}" && pwd)"
     # Build the tensors if they are not there, under the same lock carla_eval.slurm uses so a
     # concurrent job cannot read a half-written conversion. This model reads the ON/OFF count
-    # layout from inspect_capture.py --voxelise, NOT the voxels carla_to_voxel.py writes.
+    # layout from carla_voxelise.py, NOT the voxels carla_to_voxel.py writes.
     (
       flock 9
       if [ -n "$(find "${CAP_ABS}/tensors/sequence_lists" -name '*.csv' 2>/dev/null | head -1)" ]; then
         echo "tensors already present at ${CAP_ABS}/tensors"
       else
         echo "converting ${CAP_ABS} to the OF_EV_SNN layout"
-        ( cd "${CARLA_SCRIPTS_ROOT}" && python groundtruth/inspect_capture.py "${CAP_ABS}" \
-              --voxelise --out "${CAP_ABS}/tensors" --capture-id "carla_$(basename "${CAP_ABS}")" )
+        python carla_voxelise.py "${CAP_ABS}" \
+              --out "${CAP_ABS}/tensors" --capture-id "carla_$(basename "${CAP_ABS}")"
       fi
     ) 9>"${CAP_ABS}/tensors.lock"
     [ -n "$(find "${CAP_ABS}/tensors/sequence_lists" -name '*.csv' 2>/dev/null | head -1)" ] || {
