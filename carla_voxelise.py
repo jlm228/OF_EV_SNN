@@ -48,9 +48,13 @@ def _inspect_capture():
 
 
 def run_voxelise(capture_dir, out_dir, capture_id=None, flow_y_flip=True, gt_offset=1,
-                 depth_max=500.0):
-    """Write a capture in DSECDatasetLite's layout, applying flow_y_flip and gt_offset."""
+                 depth_max=500.0, only_windows=None):
+    """Write a capture in DSECDatasetLite's layout, applying flow_y_flip and gt_offset.
+
+    only_windows, if given, limits the output to those 0-based window indices.
+    """
     ic = _inspect_capture()
+    keep = None if only_windows is None else set(only_windows)
     events, windows, meta = ic.load_capture(capture_dir)
     capture_id = capture_id or os.path.basename(os.path.normpath(capture_dir))
     height, width = meta["height"], meta["width"]
@@ -69,6 +73,8 @@ def run_voxelise(capture_dir, out_dir, capture_id=None, flow_y_flip=True, gt_off
 
     written = []
     for i in range(n_windows):
+        if keep is not None and i not in keep:
+            continue
         t_start = t_starts[i]
         if pd.isna(t_start):
             continue  # window recorded zero events, nothing to bin
