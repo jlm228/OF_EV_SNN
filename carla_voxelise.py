@@ -70,6 +70,9 @@ def run_voxelise(capture_dir, out_dir, capture_id=None, flow_y_flip=True, gt_off
 
     n_windows = len(windows)
     t_starts = windows["t_start_us"].to_numpy()
+    # A contiguous copy: on the structured array's strided "t" field, searchsorted would copy the
+    # whole column on every call.
+    t_all = np.ascontiguousarray(events["t"])
 
     written = []
     for i in range(n_windows):
@@ -88,7 +91,7 @@ def run_voxelise(capture_dir, out_dir, capture_id=None, flow_y_flip=True, gt_off
             continue
         flow_2hw, mask, ped = gt
 
-        frame = bin_window_events(events["x"], events["y"], events["t"], events["pol"],
+        frame = bin_window_events(events["x"], events["y"], t_all, events["pol"],
                                   t_start, t_end, num_bins=11, height=height, width=width)
         fname = "%s_%04d.npy" % (capture_id, i + 1)
         np.save(os.path.join(ev_dir, fname), frame)
